@@ -12,6 +12,6 @@ jobs:
       - name: Izrada paketa
         run: ./scripts/build-dmg.sh
       - name: Funkcionalni test (preuzimanje, Aplikacije, pokretanje)
-        run: ./tests/functional/install-and-launch.sh
+        run: ./Tests/functional/install-and-launch.sh
       - uses: actions/upload-artifact@v4
         with: { name: Ductura-macOS, path: dist/Ductura-macOS.dmg }

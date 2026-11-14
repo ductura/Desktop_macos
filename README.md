@@ -5,7 +5,7 @@ macOS aplikacija i instalacijski paket. Swift (AppKit za početak, editor kasnij
 ## Funkcionalna provjera
 
 Korisnik preuzima odgovarajući paket i pokreće Ducturu iz mape Aplikacije.
-Pokriva je `tests/functional/install-and-launch.sh`: kopija paketa s oznakom karantene, otvaranje `.dmg`, kopiranje u `/Applications` i pokretanje preko `open` (`--smoke-out`). Radi samo na macOS-u i pokreće se u CI-ju.
+Pokriva je `Tests/functional/install-and-launch.sh`: kopija paketa s oznakom karantene, otvaranje `.dmg`, kopiranje u `/Applications` i pokretanje preko `open` (`--smoke-out`). Radi samo na macOS-u i pokreće se u CI-ju.
 
 ## Struktura
 
@@ -14,7 +14,7 @@ Pokriva je `tests/functional/install-and-launch.sh`: kopija paketa s oznakom kar
 | `Sources/DucturaCore` | Pomoćne funkcije (argumenti, nazivi paketa, verzije) |
 | `Sources/Ductura` | macOS aplikacija |
 | `Tests/DucturaCoreTests` | Testovi pomoćnih funkcija (XCTest) |
-| `tests/functional` | Funkcionalni test instalacije |
+| `Tests/functional` | Funkcionalni test instalacije |
 | `scripts/build-dmg.sh` | Izrada `Ductura.app` i `dist/Ductura-macOS.dmg` |
 
 ## Pokretanje (na Macu)
@@ -22,7 +22,7 @@ Pokriva je `tests/functional/install-and-launch.sh`: kopija paketa s oznakom kar
 ```bash
 swift test
 ./scripts/build-dmg.sh
-./tests/functional/install-and-launch.sh
+./Tests/functional/install-and-launch.sh
 ```
 
 Build je potpisan samo ad-hoc. Prije javnog izdanja trebaju Apple Developer ID (99 USD godišnje) i notarizacija, inače macOS Gatekeeper blokira prvo pokretanje.
