@@ -6,12 +6,17 @@ import AppKit
 
 let options = LaunchOptions.parse(Array(CommandLine.arguments.dropFirst()))
 let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
+// Web address from the bundle's Info.plist (DAN-883); nil when it fails the check.
+let web = WebAddress.fromInfo(Bundle.main.infoDictionary)
 
 if options.smoke {
-    let line = "Ductura OK \(version)"
-    if let out = options.smokeOutput { try? line.write(toFile: out, atomically: true, encoding: .utf8) }
-    else { print(line) }
-    exit(0)
+    // A package with an invalid web address must not pass the functional test.
+    let (code, line) = Startup.smoke(web: web, version: version)
+    if let line {
+        if let out = options.smokeOutput { try? line.write(toFile: out, atomically: true, encoding: .utf8) }
+        else { print(line) }
+    }
+    exit(code)
 }
 
 #if canImport(AppKit)
@@ -22,9 +27,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                           styleMask: [.titled, .closable, .miniaturizable, .resizable],
                           backing: .buffered, defer: false)
         window.title = Packaging.productName
-        let button = NSButton(title: "Otvori Ducturu", target: self, action: #selector(openWeb))
-        button.frame = NSRect(x: 24, y: 560, width: 180, height: 32)
-        window.contentView?.addSubview(button)
+        // Fail closed: without a checked address there is no button, only the message.
+        let view: NSView = Startup.linkURL(options: options, web: web) == nil
+            ? NSTextField(labelWithString: Startup.invalidAddressText)
+            : NSButton(title: "Otvori Ducturu", target: self, action: #selector(openWeb))
+        view.frame = NSRect(x: 24, y: 560, width: 480, height: 32)
+        window.contentView?.addSubview(view)
         window.center()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -32,8 +40,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     @objc func openWeb() {
         // ID ulazi u URL samo kodiran i samo ako prolazi pravilo ugovora (WorkId).
-        let url = WorkId.documentURL(base: Packaging.webURL, id: options.openDocumentId)
-            ?? URL(string: Packaging.webURL)!
+        guard let url = Startup.linkURL(options: options, web: web) else { return }
         NSWorkspace.shared.open(url)
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }

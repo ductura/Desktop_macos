@@ -29,10 +29,11 @@ public enum WorkId {
         return decoded
     }
 
-    /// URL rada u web aplikaciji, s kodiranim ID-om; `nil` za neispravan ID.
-    public static func documentURL(base: String, id: String?) -> URL? {
+    /// URL rada `<adresa>#/doc/<ID>` (adresa iz paketa, zadano `/app/`), s kodiranim ID-om;
+    /// `nil` za neispravan ID.
+    public static func documentURL(web: WebAddress, id: String?) -> URL? {
         guard let id, isValid(id) else { return nil }
-        return URL(string: base + "/app/web/#/doc/" + encode(id))
+        return URL(string: web.url + "#/doc/" + encode(id))
     }
 
     /// Sve osim RFC 3986 unreserved znakova postaje `%XX` po UTF-8 bajtu.

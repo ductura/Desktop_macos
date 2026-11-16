@@ -7,6 +7,7 @@ import XCTest
 // cases (undefined, 7, {}, ...) cannot be expressed: the Swift type is String.
 final class WorkIdTests: XCTestCase {
     static let max = WorkId.maxLength
+    static let web = WebAddress.make(url: "https://ductura.test/app/", hosts: "ductura.test")!
 
     /// Refused by isValid, so by the link and the URL too. Negative cases first.
     static let invalid: [String] = [
@@ -90,23 +91,23 @@ final class WorkIdTests: XCTestCase {
 
     func testInvalidIdNeverReachesTheURL() {
         for id in Self.invalid {
-            XCTAssertNil(WorkId.documentURL(base: "https://ductura.test", id: id))
-            XCTAssertNil(WorkId.documentURL(base: "https://ductura.test", id: LaunchOptions(openDocumentId: id).openDocumentId))
+            XCTAssertNil(WorkId.documentURL(web: Self.web, id: id))
+            XCTAssertNil(WorkId.documentURL(web: Self.web, id: LaunchOptions(openDocumentId: id).openDocumentId))
         }
-        XCTAssertNil(WorkId.documentURL(base: "https://ductura.test", id: nil))
+        XCTAssertNil(WorkId.documentURL(web: Self.web, id: nil))
     }
 
     func testURLEscapesEveryIdAndRoundTrips() {
-        let prefix = "https://ductura.test/app/web/#/doc/"
+        let prefix = "https://ductura.test/app/#/doc/"
         let unreserved = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~%")
         for id in Self.valid {
-            let url = WorkId.documentURL(base: "https://ductura.test", id: id)?.absoluteString ?? ""
+            let url = WorkId.documentURL(web: Self.web, id: id)?.absoluteString ?? ""
             XCTAssertTrue(url.hasPrefix(prefix), id)
             let tail = String(url.dropFirst(prefix.count))
             XCTAssertTrue(tail.unicodeScalars.allSatisfy(unreserved.contains), tail)
             same(WorkId.fromPathSegment(tail), id)
         }
-        XCTAssertEqual(WorkId.documentURL(base: "https://ductura.test", id: "../x")?.absoluteString, prefix + "..%2Fx")
-        XCTAssertEqual(WorkId.documentURL(base: "https://ductura.test", id: "\u{10D}")?.absoluteString, prefix + "%C4%8D")
+        XCTAssertEqual(WorkId.documentURL(web: Self.web, id: "../x")?.absoluteString, prefix + "..%2Fx")
+        XCTAssertEqual(WorkId.documentURL(web: Self.web, id: "\u{10D}")?.absoluteString, prefix + "%C4%8D")
     }
 }
