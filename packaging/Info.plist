@@ -11,6 +11,9 @@
   <key>CFBundleVersion</key><string>__VERSION__</string>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
   <key>NSHighResolutionCapable</key><true/>
+  <!-- Web address of the package (DAN-883): only https and a host from the list pass. -->
+  <key>DucturaWebURL</key><string>https://ductura.org/app/</string>
+  <key>DucturaWebHosts</key><string>ductura.org</string>
   <key>CFBundleURLTypes</key>
   <array><dict>
     <key>CFBundleURLName</key><string>org.ductura.link</string>

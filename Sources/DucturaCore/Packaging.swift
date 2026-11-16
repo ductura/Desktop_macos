@@ -3,7 +3,6 @@ import Foundation
 public enum Packaging {
     public static let productName = "Ductura"
     public static let bundleIdentifier = "org.ductura.desktop"
-    public static let webURL = "https://ductura.org"
 
     /// Naziv paketa koji nudi preloader.
     public static let dmgFileName = "Ductura-macOS.dmg"
