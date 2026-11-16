@@ -2,18 +2,20 @@ name: CI
 on:
   push: { branches: [main] }
   pull_request:
+permissions:
+  contents: read
 jobs:
   build-test:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Testovi pomoćnih funkcija
         run: swift test
       - name: Izrada paketa
         run: ./scripts/build-dmg.sh
       - name: Funkcionalni test (preuzimanje, Aplikacije, pokretanje)
         run: ./Tests/functional/install-and-launch.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with: { name: Ductura-macOS, path: dist/Ductura-macOS.dmg }
 
   # Tests of ci-ok itself (scripts/ci-ok.test.mjs) on Linux: the repository
@@ -35,13 +37,24 @@ jobs:
       - name: ci-ok tests
         run: node --test scripts/ci-ok.test.mjs
 
+  # Shared scans from ductura/.github, called by full SHA (DAN-880).
+  secret-scan:
+    uses: ductura/.github/.github/workflows/secret-scan.yml@6f392fc2c87b1473266378d94895f1273087297c # main after .github#18
+
+  # Off pull requests there is nothing to compare: skipped, and ci-ok allows that skip only there.
+  dependency-review:
+    if: ${{ github.event_name == 'pull_request' }}
+    uses: ductura/.github/.github/workflows/dependency-review.yml@6f392fc2c87b1473266378d94895f1273087297c # main after .github#18
+
   # The one required status (DAN-885): green only when every job above
-  # succeeded; failure, cancelled, skipped or a missing result fails it.
-  # A plain job, so the check is named exactly ci-ok.
+  # succeeded; failure, cancelled, skipped or a missing result fails it,
+  # except dependency-review skipped off pull requests (ALLOW_SKIPPED, the
+  # rule of ci-ok.yml in ductura/.github). A plain job, so the check is named
+  # exactly ci-ok.
   ci-ok:
     name: ci-ok
     if: ${{ always() }}
-    needs: [build-test, ci-ok-test]
+    needs: [build-test, ci-ok-test, secret-scan, dependency-review]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions: {}
@@ -50,6 +63,7 @@ jobs:
         shell: bash
         env:
           NEEDS: ${{ toJSON(needs) }}
+          ALLOW_SKIPPED: ${{ github.event_name != 'pull_request' && 'dependency-review' || '' }}
         run: |
           # ci-ok:begin
           set -euo pipefail
@@ -57,8 +71,15 @@ jobs:
             echo "::error::needs must be a non-empty JSON object"
             exit 1
           fi
-          problems="$(jq -r 'to_entries[] | ((.value | objects | .result) // "missing") as $r
-            | select($r != "success") | "job \(.key) result: \($r)"' <<< "$NEEDS")"
+          allowed="$(tr -s ' \t\r\n' '\n' <<< "$ALLOW_SKIPPED" | sed '/^$/d' | jq -R . | jq -sc .)"
+          problems="$(jq -r --argjson allowed "$allowed" '
+            (($allowed - keys) | map("allow-skipped names a job that is not in needs: \(.)"))
+            + (to_entries | map(
+                ((.value | objects | .result) // "missing") as $r
+                | if $r == "success" then empty
+                  elif $r == "skipped" and (.key as $k | $allowed | index($k)) then empty
+                  else "job \(.key) result: \($r)" end))
+            | .[]' <<< "$NEEDS")"
           if [ -n "$problems" ]; then
             while IFS= read -r line; do echo "::error::$line"; done <<< "$problems"
             exit 1
