@@ -43,14 +43,17 @@ final class WebAddressTests: XCTestCase {
         for entry in ["Ductura.org", " ductura.org", "ductura.org ", "ductura .org", "ductura.org.", ".ductura.org",
                       "ductura..org", "ductura.org:443", "127.0.0.1", "-ductura.org", "ductura-.org", "*.ductura.org",
                       "ductura.org\r\n", "ductura.org\t", "ductura.org\u{A0}", "ductura.org\u{7F}", "toString", "__proto__",
-                      "d\u{FA}ctura.org", String(repeating: "a", count: 64) + ".org"] {
+                      "d\u{FA}ctura.org", String(repeating: "a", count: 64) + ".org",
+                      "127.0.0.0x1", "127.0.0.0x", "a.0x7f", "a.0xff", "a.0", "a.017", "a.1a", "a.-org"] {
             XCTAssertFalse(ok("https://ductura.org/app/", "ductura.org;" + entry), entry)
         }
     }
 
     func testIPINeASCIIHostNiKadJeNaPopisu() {
         for (url, hosts) in [("https://127.0.0.1/app/", "127.0.0.1"), ("https://0x7f.1/app/", "0x7f.1"),
-                             ("https://[::1]/app/", "[::1]"), ("https://d\u{FA}ctura.org/app/", "d\u{FA}ctura.org")] {
+                             ("https://[::1]/app/", "[::1]"), ("https://d\u{FA}ctura.org/app/", "d\u{FA}ctura.org"),
+                             ("https://127.0.0.0x1/app/", "127.0.0.0x1"), ("https://1.2.3.0x4/app/", "1.2.3.0x4"),
+                             ("https://a.0x7f/app/", "a.0x7f"), ("https://a.0x/app/", "a.0x")] {
             XCTAssertFalse(ok(url, hosts), url)
         }
     }
@@ -58,7 +61,8 @@ final class WebAddressTests: XCTestCase {
     func testPrihvacaIspravnuAdresuSPopisa() {
         for (url, hosts) in [("https://ductura.org/app/", "ductura.org"), ("https://ductura.org/", "ductura.org"),
                              ("https://ductura.org/app/", "a.test;ductura.org"), ("https://a.test/app/", "a.test;ductura.org"),
-                             ("https://web-1.a.test/x/y~z_1.0/", "web-1.a.test")] {
+                             ("https://web-1.a.test/x/y~z_1.0/", "web-1.a.test"), ("https://0x7f.a.test/app/", "0x7f.a.test"),
+                             ("https://1.xn--p1ai/app/", "1.xn--p1ai")] {
             XCTAssertEqual(WebAddress.make(url: url, hosts: hosts)?.url, url)
         }
     }

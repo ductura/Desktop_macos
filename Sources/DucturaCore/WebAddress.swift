@@ -47,10 +47,11 @@ public struct WebAddress: Equatable {
     }
 
     /// LDH ime s malim slovima: barem dvije oznake od 1 do 63 znaka, bez rubne `-`, a zadnja
-    /// oznaka nije samo od brojki (IPv4 adresa nikad nije ime hosta).
+    /// oznaka počinje slovom. Time IPv4 adresa nikad nije ime hosta, ni u obliku koji WHATWG
+    /// parser čita kao broj (završna oznaka od znamenki, `0x…` ili `0…`).
     static func isHostName(_ host: Substring) -> Bool {
         let labels = host.split(separator: ".", omittingEmptySubsequences: false)
-        guard labels.count >= 2, let last = labels.last, !last.utf8.allSatisfy({ (0x30...0x39).contains($0) })
+        guard labels.count >= 2, let first = labels.last?.utf8.first, (0x61...0x7A).contains(first)
         else { return false }
         return labels.allSatisfy { l in
             (1...63).contains(l.utf8.count) && l.first != "-" && l.last != "-"
