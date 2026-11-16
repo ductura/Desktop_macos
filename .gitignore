@@ -3,3 +3,4 @@ build/
 dist/
 .swiftpm/
 *.xcodeproj/xcuserdata/
+node_modules/
