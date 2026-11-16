@@ -17,12 +17,28 @@ public struct LaunchOptions: Equatable {
             let a = args[i]
             if a == "--smoke" { o.smoke = true }
             else if a == "--smoke-out", i + 1 < args.count { o.smoke = true; i += 1; o.smokeOutput = args[i] }
-            else if a.lowercased().hasPrefix("ductura://doc/") {
-                let id = String(a.dropFirst("ductura://doc/".count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-                o.openDocumentId = id.isEmpty ? nil : id
-            }
+            else if let rest = linkRest(a) { o.openDocumentId = documentId(linkRest: rest) }
             i += 1
         }
         return o
+    }
+
+    /// Ostatak iza `ductura://doc/` (prefiks ASCII bez obzira na velika slova) ili `nil`.
+    static func linkRest(_ arg: String) -> Substring.UnicodeScalarView? {
+        let prefix = "ductura://doc/".unicodeScalars
+        let scalars = Substring(arg).unicodeScalars
+        guard scalars.count >= prefix.count, zip(scalars, prefix).allSatisfy({ (a, p) in
+            (0x41...0x5A).contains(a.value) ? a.value + 0x20 == p.value : a == p
+        }) else { return nil }
+        return scalars.dropFirst(prefix.count)
+    }
+
+    /// ID iz ostatka poveznice: jedna završna `/` se skida, a sirovi `/`, `?`
+    /// ili `#` znače da to nije jedan segment. Pravilo je `WorkId.fromPathSegment`.
+    static func documentId(linkRest: Substring.UnicodeScalarView) -> String? {
+        var rest = linkRest
+        if rest.last == "/" { rest = rest.dropLast() }
+        if rest.contains(where: { $0 == "/" || $0 == "?" || $0 == "#" }) { return nil }
+        return WorkId.fromPathSegment(String(rest))
     }
 }

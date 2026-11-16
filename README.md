@@ -12,6 +12,7 @@ Pokriva je `Tests/functional/install-and-launch.sh`: kopija paketa s oznakom kar
 | Mapa | Sadržaj |
 |---|---|
 | `Sources/DucturaCore` | Pomoćne funkcije (argumenti, nazivi paketa, verzije) |
+| `Sources/DucturaCore/WorkId.swift` | ID rada iz poveznice `ductura://doc/<id>` po pravilu ugovora S-1H.1-c (isto kao serverski `work-id.ts`) i URL s kodiranim ID-om |
 | `Sources/Ductura` | macOS aplikacija |
 | `Tests/DucturaCoreTests` | Testovi pomoćnih funkcija (XCTest) |
 | `Tests/functional` | Funkcionalni test instalacije |

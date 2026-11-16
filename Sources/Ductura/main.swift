@@ -31,9 +31,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Sljedeći korak: ugraditi editor (WKWebView) umjesto gumba.
     }
     @objc func openWeb() {
-        var url = Packaging.webURL
-        if let id = options.openDocumentId { url += "/app/web/#/doc/\(id)" }
-        NSWorkspace.shared.open(URL(string: url)!)
+        // ID ulazi u URL samo kodiran i samo ako prolazi pravilo ugovora (WorkId).
+        let url = WorkId.documentURL(base: Packaging.webURL, id: options.openDocumentId)
+            ?? URL(string: Packaging.webURL)!
+        NSWorkspace.shared.open(url)
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 }
