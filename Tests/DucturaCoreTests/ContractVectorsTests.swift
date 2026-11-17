@@ -37,6 +37,16 @@ enum TestFakesRelease {
         "internal": [.serverUnavailable, .serverUnavailable],
         "too-many-requests": [.serverUnavailable, .serverUnavailable],
     ]
+    /// Everything `decide` reads, by vector name (DAN-1001): a change that matters only for a
+    /// client version outside `clients` (e.g. `alive` with minClientVersion 0.9.9) still fails.
+    static let readings: [String: HealthReading] = [
+        "alive": .answered(status: "ok", minClientVersion: nil),
+        "alive-with-version": .answered(status: "ok", minClientVersion: nil),
+        "alive-current": .answered(status: "ok", minClientVersion: "1.0.0"),
+        "degraded": .answered(status: "ok", minClientVersion: "1.0.0"),
+        "internal": .unavailable,
+        "too-many-requests": .unavailable,
+    ]
 
     static func parseLock(_ data: Data) throws -> TestFakesLock {
         guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -135,6 +145,9 @@ enum TestFakesRelease {
             throw VectorsError(description: "health vektori \(names.sorted()) nisu točno tablica \(expected.keys.sorted())")
         }
         for vector in vectors {
+            guard reading(vector) == readings[vector.name] else {
+                throw VectorsError(description: "vektor \(vector.name): \(reading(vector)), očekivano \(readings[vector.name].map { "\($0)" } ?? "nil")")
+            }
             let outcomes = clients.map { ClientVersion.decide(reading(vector), clientVersion: $0) }
             guard outcomes == expected[vector.name] else {
                 throw VectorsError(description: "vektor \(vector.name): \(outcomes), očekivano \(expected[vector.name]!)")

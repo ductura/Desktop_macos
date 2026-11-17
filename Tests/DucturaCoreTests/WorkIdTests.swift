@@ -162,20 +162,22 @@ enum WorkIdVectors {
         return Int(exactly: n.doubleValue)
     }
 
-    static func hasMarker(_ text: String) -> Bool { text.unicodeScalars.contains { $0.value >= 0x10_0000 } }
+    /// Stands for a lone surrogate, which a Swift String cannot hold. parse counts every marker it
+    /// decodes against the escapes it replaced, so a file that already has this text is refused.
+    static let marker = "\u{0}\u{FFFF}lone-surrogate\u{FFFF}\u{0}"
 
-    /// A Swift String cannot hold a lone surrogate, so each lone `\uD800`-`\uDFFF` escape becomes the
-    /// plane-16 marker U+100000 + offset. A file that already has a plane-16 character is refused, so a
-    /// marker is never ambiguous.
-    static func markLoneSurrogates(_ data: Data) throws -> Data {
+    static func markers(_ text: String) -> Int { text.components(separatedBy: marker).count - 1 }
+
+    static func hasMarker(_ text: String) -> Bool { markers(text) > 0 }
+
+    /// Each lone `\uD800`-`\uDFFF` escape becomes `marker`; returns the text and how many it replaced.
+    static func markLoneSurrogates(_ data: Data) throws -> (Data, Int) {
         let b = [UInt8](data)
         // JSON text has no raw control byte but TAB, LF and CR, so a NUL also refuses UTF-16 and UTF-32,
         // which JSONSerialization would otherwise detect and accept past the byte scanner.
         guard b.first == 0x7B, String(data: data, encoding: .utf8) != nil,
               !b.contains(where: { $0 < 0x20 && $0 != 0x09 && $0 != 0x0A && $0 != 0x0D })
         else { throw fail("work-id.json nije UTF-8 objekt bez BOM-a i kontrolnih bajtova") }
-        let plane16 = fail("work-id.json ima znak ravnine 16")
-        if b.contains(0xF4) { throw plane16 }
         func unit(_ at: Int) -> UInt32? {
             guard at + 6 <= b.count, b[at] == 0x5C, b[at + 1] == 0x75,
                   b[(at + 2)..<(at + 6)].allSatisfy({ (0x30...0x39).contains($0) || (0x41...0x46).contains($0 & 0xDF) })
@@ -185,6 +187,7 @@ enum WorkIdVectors {
         var out: [UInt8] = []
         var at = 0
         var inString = false
+        var lone = 0
         while at < b.count {
             if b[at] == 0x22 { inString.toggle() }
             // Outside strings every number must be a plain integer: a fraction or exponent
@@ -195,30 +198,30 @@ enum WorkIdVectors {
             guard b[at] == 0x5C, at + 1 < b.count else { out.append(b[at]); at += 1; continue }
             guard let u = unit(at) else { out += b[at...(at + 1)]; at += 2; continue }
             if (0xD800...0xDBFF).contains(u), let low = unit(at + 6), (0xDC00...0xDFFF).contains(low) {
-                if u >= 0xDBC0 { throw plane16 }
                 out += b[at..<(at + 12)]
                 at += 12
                 continue
             }
             if (0xD800...0xDFFF).contains(u) {
-                let n = u - 0xD800
-                out += Array(String(format: "\\u%04X\\u%04X", 0xDBC0 + (n >> 10), 0xDC00 + (n & 0x3FF)).utf8)
+                out += Array(#"\u0000\uFFFFlone-surrogate\uFFFF\u0000"#.utf8)
+                lone += 1
             } else {
                 out += b[at..<(at + 6)]
             }
             at += 6
         }
-        return Data(out)
+        return (Data(out), lone)
     }
 
     static func parse(_ data: Data) throws -> [Vector] {
-        let marked = try markLoneSurrogates(data)
+        let (marked, lone) = try markLoneSurrogates(data)
         guard let top = try? JSONSerialization.jsonObject(with: marked) as? [String: Any],
               Set(top.keys) == ["format", "vectors"], top["format"] as? String == format,
               let list = top["vectors"] as? [[String: Any]], !list.isEmpty
         else { throw fail("work-id.json nije \(format) s nepraznim popisom vektora") }
         var names = Set<String>()
-        return try list.map { (v: [String: Any]) throws -> Vector in
+        var seen = 0
+        let vectors = try list.map { (v: [String: Any]) throws -> Vector in
             let keys = Set(v.keys)
             let name = v["name"] as? String ?? ""
             guard keys.isSubset(of: ["name", "check", "input", "repeat", "accepted", "id"]),
@@ -239,8 +242,11 @@ enum WorkIdVectors {
             guard keys.contains("id") == (id != nil), !hasMarker(id ?? ""),
                   check == "isWorkId" || (input as? String).map(hasMarker) == false
             else { throw fail("vektor \(name): id ili ulaz puta nije ispravan string") }
+            seen += (input as? String).map(markers) ?? 0
             return Vector(name: name, check: check, input: input, accepted: accepted, id: id)
         }
+        guard seen == lone else { throw fail("work-id.json već sadrži oznaku neparnog surogata") }
+        return vectors
     }
 
     /// Throws on the first vector whose Swift outcome differs; returns how many ran, by "check:accepted".
@@ -325,8 +331,9 @@ extension WorkIdTests {
             [v(#""check":"isWorkId","input":"doc","accepted":true,"id":"doc""#)], [v(#""check":"workIdFromPath","input":"%00","accepted":false,"id":"x""#)],
             [v(#""check":"workIdFromPath","input":"doc","accepted":true"#)], [v(#""check":"workIdFromPath","input":7,"accepted":false"#)],
             [v(#""check":"workIdFromPath","input":"doc","accepted":true,"id":7"#)], [#"{"check":"isWorkId","input":"doc","accepted":true}"#],
-            [#"{"name":"","check":"isWorkId","input":"doc","accepted":true}"#], [v(#""check":"isWorkId","input":"doc"# + "\u{100000}" + #"","accepted":true"#)],
-            [v(#""check":"isWorkId","input":"doc\udbc0\udc00","accepted":true"#)], [v(#""check":"isWorkId","input":"doc\uDBFF\uDFFF","accepted":true"#)],
+            [#"{"name":"","check":"isWorkId","input":"doc","accepted":true}"#],
+            [v(#""check":"isWorkId","input":"\u0000\uFFFFlone-surrogate\uFFFF\u0000","accepted":false"#)],
+            [v(#""check":"isWorkId","input":"\u0000\uFFFFlone-surrogate\uFFFF\u0000\ud800","accepted":false"#)],
         ]
         for list in items { XCTAssertThrowsError(try WorkIdVectors.parse(file(list)), list.joined()) }
         let other = [#"{"vectors":[\#(ok)]}"#, #"{"format":"x","vectors":[\#(ok)]}"#, #"{"format":"ductura-work-id-vectors-v1","vectors":[\#(ok)],"x":1}"#, "[]", ""]
@@ -355,7 +362,12 @@ extension WorkIdTests {
         let pair = try WorkIdVectors.parse(file([vector(#"\ud83d\ude00"#, true)]))
         XCTAssertEqual(pair.first?.input as? String, "\u{1F600}")
         XCTAssertThrowsError(try WorkIdVectors.parse(file([#"{"name":"r","check":"isWorkId","repeat":{"text":"\ud800","count":1},"accepted":false}"#])))
-        // A marker in the id would equal a decoded U+100000 from the path; in a name it hides a lone surrogate.
+        // Plane 16 is ordinary text, not a marker (review c.6959287300): literal, escaped and through the path.
+        let plane16 = [#"{"name":"l","check":"isWorkId","input":"doc"# + "\u{100000}" + #"","accepted":true}"#,
+                       #"{"name":"e","check":"isWorkId","input":"doc\udbc0\udc00\uDBFF\uDFFF","accepted":true}"#,
+                       #"{"name":"p","check":"workIdFromPath","input":"%F4%80%80%80","accepted":true,"id":"\udbc0\udc00"}"#]
+        XCTAssertEqual(try WorkIdVectors.run(WorkIdVectors.parse(file(plane16))), ["isWorkId:true": 2, "workIdFromPath:true": 1])
+        // A lone surrogate in the id or the name has no Swift String to compare with.
         XCTAssertThrowsError(try WorkIdVectors.parse(file([#"{"name":"i","check":"workIdFromPath","input":"%F4%80%80%80","accepted":true,"id":"\ud800"}"#])))
         XCTAssertThrowsError(try WorkIdVectors.parse(file([#"{"name":"n\ud800","check":"isWorkId","input":"doc","accepted":true}"#])))
     }
