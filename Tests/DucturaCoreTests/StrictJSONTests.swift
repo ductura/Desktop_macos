@@ -48,10 +48,14 @@ final class StrictJSONTests: XCTestCase {
     }
 
     func testDubokoUgnijezdenUlazDajeGreskuNePad() {
-        XCTAssertEqual(kind(Self.nested(StrictJSON.maxDepth + 1)), .tooDeep)
+        // Literal 64 and 65 (QA c.6963234140): a test derived from maxDepth would follow a changed constant.
+        XCTAssertEqual(kind(Self.nested(65)), .tooDeep)
+        XCTAssertEqual(kind("[" + Self.nested(64) + "]"), .tooDeep)
+        XCTAssertEqual(kind(String(repeating: #"{"a":"#, count: 65) + "1" + String(repeating: "}", count: 65)), .tooDeep)
         XCTAssertEqual(kind(String(repeating: "[", count: 100_000)), .tooDeep)
         XCTAssertEqual(kind(String(repeating: #"{"a":"#, count: 100_000)), .tooDeep)
-        XCTAssertNil(kind(Self.nested(StrictJSON.maxDepth)))
+        XCTAssertNil(kind(Self.nested(64)))
+        XCTAssertNil(kind(String(repeating: #"{"a":"#, count: 64) + "1" + String(repeating: "}", count: 64)))
     }
 
     func testIspravanUlazDajeTocnuVrijednost() throws {
@@ -80,7 +84,7 @@ final class StrictJSONTests: XCTestCase {
         }
         XCTAssertEqual(at(#"{"a":1,"a":2}"#), 7)
         XCTAssertEqual(at("[\"😀\",]"), 6)
-        XCTAssertEqual(at(Self.nested(StrictJSON.maxDepth + 1)), StrictJSON.maxDepth)
+        XCTAssertEqual(at(Self.nested(65)), 64)
         XCTAssertEqual(at("[1,\u{0}]"), 0)
     }
 
