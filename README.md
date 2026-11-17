@@ -40,7 +40,7 @@ Konačnu domenu (V-0) upiši u ta dva ključa.
 
 Prozor sadrži WKWebView koji učitava provjerenu adresu (s ID-om rada `#/doc/<ID>` ako je zadan). Bez provjerene adrese WKWebView se ne stvara, nego prozor pokazuje poruku. Gumb za otvaranje u sustavnom pregledniku je uklonjen. Spike ne odlučuje o tehnologiji ljuske (odluka 8).
 
-Funkcionalni test pokreće aplikaciju s `--smoke-window <datoteka>`: aplikacija izgradi prozor, zapiše što prozor stvarno sadrži (`Ductura window web <adresa>`, `Ductura window message` ili `Ductura window error`) i putanju paketa, pa se ugasi. Kopije paketa s `http://` adresom i hostom izvan popisa moraju dati `message`.
+Funkcionalni test pokreće aplikaciju s `--smoke-window <datoteka>`: aplikacija izgradi prozor, zapiše što prozor stvarno sadrži (`Ductura window web <adresa>`, `Ductura window message` ili `Ductura window error`) i putanju paketa, pa se ugasi. Adresa u retku `web` je ona koju je WebKit stvarno počeo učitavati (`decidePolicyFor` glavnog okvira); ako WKWebView u 30 s ne započne navigaciju, redak je `error`. Kopije paketa s `http://` adresom i hostom izvan popisa moraju dati `message`.
 
 Nalazi (CI `macos-latest`):
 
