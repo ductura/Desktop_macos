@@ -18,6 +18,7 @@ Pokriva je `Tests/functional/install-and-launch.sh`: kopija paketa s oznakom kar
 | `Sources/DucturaCore/WebAddress.swift` | Provjera adrese weba iz `Info.plist` (DAN-883) |
 | `Sources/DucturaCore/Startup.swift` | Ishod `--smoke` i poveznica prema provjerenoj adresi |
 | `Sources/DucturaCore/Navigation.swift` | Pravilo navigacije za WKWebView (DAN-961): host s popisa ostaje u ljusci, drugi `https` host ide u preglednik, ostalo se odbija. Još nije spojeno na `decidePolicyFor`. |
+| `Sources/DucturaCore/ClientVersion.swift` | Provjera verzije pri pokretanju (DAN-945): odluka iz `health.minClientVersion` i `CFBundleShortVersionString`. Još nije spojena na prozor ni na poziv servera. |
 | `Sources/Ductura` | macOS aplikacija |
 | `Tests/DucturaCoreTests` | Testovi pomoćnih funkcija (XCTest) |
 | `Tests/functional` | Funkcionalni test instalacije |
@@ -36,6 +37,19 @@ Adresa web aplikacije nije upisana u kod. Čita se iz konfiguracije paketa, klju
 `WebAddress` prihvaća samo `https` adresu s hosta s popisa, bez porta, korisnika, upita, fragmenta i `%` kodiranja, s putem koji završava s `/`. Ako adresa ne prolazi, aplikacija umjesto gumba pokazuje poruku, a `--smoke` vraća 1 i ne piše potvrdu. Zato i goli `swift run Ductura --smoke` (bez `Info.plist`) vraća 1.
 
 Konačnu domenu (V-0) upiši u ta dva ključa.
+
+## Najmanja verzija klijenta
+
+Pri pokretanju se verzija aplikacije (`CFBundleShortVersionString`) uspoređuje s `minClientVersion` iz odgovora `health` (`ClientVersion`, DAN-945). Verzije su strogo `major.minor.patch`: samo ASCII znamenke, bez vodećih nula i predznaka, najviše 9 znamenki po dijelu.
+
+| Stanje | Odluka | Web |
+|---|---|---|
+| Klijent je stariji od minimuma | nadogradnja (statična poruka, bez teksta ili poveznice sa servera) | ne otvara se |
+| Verzija klijenta nije ispravna, a server daje minimum | nadogradnja: verziju upisuje `build-dmg.sh`, pa neispravna znači pokvaren paket (i `__VERSION__` u buildu bez upisa) | ne otvara se |
+| Isti ili noviji klijent, ili server ne daje minimum | otvori | otvara se |
+| Server nedostupan, `status` nije `ok` ili minimum nije ispravan | server nedostupan: web je offline-first, a API ionako odbija klijenta s kojim ne može raditi | otvara se |
+
+Spajanje na prozor i stvarni poziv servera s rokom slijede nakon DAN-957.
 
 ## CI
 
