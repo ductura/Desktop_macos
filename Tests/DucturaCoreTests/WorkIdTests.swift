@@ -190,10 +190,18 @@ enum WorkIdVectors {
         var lone = 0
         while at < b.count {
             if b[at] == 0x22 { inString.toggle() }
-            // Outside strings every number must be a plain integer: a fraction or exponent
-            // (1.0000000000000001) would round to an integer in Double before Int(exactly:) sees it.
-            if !inString, b[at] == 0x2E || b[at] == 0x2B || ((b[at] | 0x20) == 0x65 && at > 0 && (0x30...0x39).contains(b[at - 1])) {
-                throw fail("work-id.json ima broj koji nije cijeli")
+            // The only numbers are repeat counts, read here from the token text, never through Double
+            // (1.0000000000000001 would round to 1): exactly 1 to 1024 in plain digits, nothing else.
+            let numeric = { (c: UInt8) in (0x30...0x39).contains(c) || c == 0x2D || c == 0x2E || c == 0x2B }
+            if !inString, numeric(b[at]) {
+                var end = at
+                while end < b.count, numeric(b[end]) || (0x61...0x7A).contains(b[end] | 0x20) { end += 1 }
+                let token = String(decoding: b[at..<end], as: UTF8.self)
+                guard token.first != "0", token.utf8.allSatisfy({ (0x30...0x39).contains($0) }), let n = Int(token), (1...1024).contains(n)
+                else { throw fail("work-id.json ima broj \(token), a smije samo cijeli 1 do 1024") }
+                out += b[at..<end]
+                at = end
+                continue
             }
             guard b[at] == 0x5C, at + 1 < b.count else { out.append(b[at]); at += 1; continue }
             guard let u = unit(at) else { out += b[at...(at + 1)]; at += 2; continue }
@@ -324,7 +332,9 @@ extension WorkIdTests {
             [v(#""check":"isWorkId","repeat":{"text":"d","count":1.5},"accepted":true"#)], [v(#""check":"isWorkId","repeat":{"text":"d","count":true},"accepted":true"#)],
             [v(#""check":"isWorkId","repeat":{"text":"d","count":1.0000000000000001},"accepted":true"#)], [v(#""check":"isWorkId","repeat":{"text":"d","count":1.0},"accepted":true"#)],
             [v(#""check":"isWorkId","repeat":{"text":"d","count":1e0},"accepted":true"#)], [v(#""check":"isWorkId","repeat":{"text":"d","count":10E-1},"accepted":true"#)],
-            [v(#""check":"isWorkId","repeat":{"text":"d","count":+1},"accepted":true"#)],
+            [v(#""check":"isWorkId","repeat":{"text":"d","count":+1},"accepted":true"#)], [v(#""check":"isWorkId","repeat":{"text":"d","count":-1},"accepted":true"#)],
+            [v(#""check":"isWorkId","repeat":{"text":"d","count":01},"accepted":true"#)], [v(#""check":"isWorkId","repeat":{"text":"d","count":18446744073709551617},"accepted":true"#)],
+            [v(#""check":"isWorkId","input":"doc","accepted":true,"x":1"#)],
             [v(#""check":"isWorkId","repeat":{"text":"d","count":"1"},"accepted":true"#)], [v(#""check":"isWorkId","repeat":{"text":"","count":1},"accepted":false"#)],
             [v(#""check":"isWorkId","repeat":{"text":"d","count":1,"x":1},"accepted":true"#)], [v(#""check":"isWorkId","input":"doc","accepted":1"#)],
             [v(#""check":"isWorkId","input":"doc","accepted":"true""#)], [v(#""check":"isWorkId","input":"doc""#)],

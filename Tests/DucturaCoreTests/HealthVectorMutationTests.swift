@@ -27,4 +27,18 @@ final class HealthVectorMutationTests: XCTestCase {
             }
         }
     }
+
+    /// Offline (review c.6959287300): a threshold both table clients pass still changes the reading.
+    func testPragKojiKlijentiIzTabliceProlazeRusiProvjeru() {
+        func vector(_ name: String, _ status: Int, _ body: String) -> HealthVector { HealthVector(name: name, status: status, body: Data(body.utf8)) }
+        let current = #"{"status":"ok","state":"ok","minClientVersion":"1.0.0"}"#
+        let valid = [vector("alive", 200, #"{"status":"ok"}"#), vector("alive-with-version", 200, #"{"status":"ok","version":"1.2.0"}"#),
+                     vector("alive-current", 200, current), vector("degraded", 200, current), vector("internal", 500, "{}"), vector("too-many-requests", 429, "{}")]
+        XCTAssertNoThrow(try TestFakesRelease.check(valid))
+        for minimum in ["0.0.0", "0.9.9"] {
+            let changed = [vector("alive", 200, #"{"status":"ok","minClientVersion":"\#(minimum)"}"#)] + valid.dropFirst()
+            XCTAssertEqual(changed.map { ClientVersion.decide(TestFakesRelease.reading($0), clientVersion: "1.0.0") }.first, .open)
+            XCTAssertThrowsError(try TestFakesRelease.check(changed), minimum) { XCTAssertTrue("\($0)".hasPrefix("vektor alive:"), "\($0)") }
+        }
+    }
 }
