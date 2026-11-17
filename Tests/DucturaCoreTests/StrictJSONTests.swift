@@ -18,6 +18,8 @@ final class StrictJSONTests: XCTestCase {
         Array(#"{"a":1}"#.utf16).flatMap { [UInt8($0 & 0xFF), UInt8($0 >> 8)] }, // UTF-16LE without BOM
         Array(#"{"a":1}"#.utf16).flatMap { [UInt8($0 >> 8), UInt8($0 & 0xFF)] }, // UTF-16BE without BOM
         Array("\"a\u{0}b\"".utf8), Array("{}\u{0}".utf8), Array("\u{0}{}".utf8),
+        // input ending inside a UTF-8 sequence (review c.6963458522)
+        [0x7B, 0x7D, 0xC4], [0x22, 0xE2, 0x82], [0x22, 0xF0, 0x9F, 0x98], [0x5B, 0xED],
     ]
 
     static let syntax: [String] = [
@@ -54,8 +56,9 @@ final class StrictJSONTests: XCTestCase {
         XCTAssertEqual(kind(String(repeating: #"{"a":"#, count: 65) + "1" + String(repeating: "}", count: 65)), .tooDeep)
         XCTAssertEqual(kind(String(repeating: "[", count: 100_000)), .tooDeep)
         XCTAssertEqual(kind(String(repeating: #"{"a":"#, count: 100_000)), .tooDeep)
-        XCTAssertNil(kind(Self.nested(64)))
-        XCTAssertNil(kind(String(repeating: #"{"a":"#, count: 64) + "1" + String(repeating: "}", count: 64)))
+        // Positive cases must parse, not merely avoid one error kind (review c.6963458522).
+        XCTAssertNoThrow(try StrictJSON.parse(Data(Self.nested(64).utf8)))
+        XCTAssertNoThrow(try StrictJSON.parse(Data((String(repeating: #"{"a":"#, count: 64) + "1" + String(repeating: "}", count: 64)).utf8)))
     }
 
     func testIspravanUlazDajeTocnuVrijednost() throws {
@@ -73,8 +76,14 @@ final class StrictJSONTests: XCTestCase {
              .object([[0xD800]: .number("1"), u("__proto__"): .null, u("toString"): .bool(true), u("constructor"): .array([])])),
             (#"[{"a":1},{"a":2}]"#, .array([.object([u("a"): .number("1")]), .object([u("a"): .number("2")])])),
             (#"{"input":0,"accepted":false}"#, .object([u("input"): .number("0"), u("accepted"): .bool(false)])),
+            // An escaped NUL is valid JSON; only a raw NUL byte is an encoding error.
+            (#""\u0000""#, .string([0])), (#"{"\u0000":0}"#, .object([[0]: .number("0")])),
+            // Canonically equivalent keys stay apart: compared by units, not as Swift String.
+            (#"{"\u00e9":1,"e\u0301":2}"#, .object([[0xE9]: .number("1"), [0x65, 0x301]: .number("2")])),
+            ("{\"\u{E9}\":1,\"e\u{301}\":2}", .object([[0xE9]: .number("1"), [0x65, 0x301]: .number("2")])),
         ]
         for (text, value) in cases { XCTAssertEqual(try StrictJSON.parse(Data(text.utf8)), value, text) }
+        XCTAssertNotEqual(try StrictJSON.parse(Data(#""\u00e9""#.utf8)), try StrictJSON.parse(Data(#""e\u0301""#.utf8)))
     }
 
     /// The offset is in UTF-16 units of the decoded text: 😀 before the error counts as 2.
