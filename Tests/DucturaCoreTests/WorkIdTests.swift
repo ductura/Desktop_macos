@@ -228,7 +228,6 @@ enum WorkIdVectors {
               let list = top["vectors"] as? [[String: Any]], !list.isEmpty
         else { throw fail("work-id.json nije \(format) s nepraznim popisom vektora") }
         var names = Set<String>()
-        var seen = 0
         let vectors = try list.map { (v: [String: Any]) throws -> Vector in
             let keys = Set(v.keys)
             let name = v["name"] as? String ?? ""
@@ -250,10 +249,16 @@ enum WorkIdVectors {
             guard keys.contains("id") == (id != nil), !hasMarker(id ?? ""),
                   check == "isWorkId" || (input as? String).map(hasMarker) == false
             else { throw fail("vektor \(name): id ili ulaz puta nije ispravan string") }
-            seen += (input as? String).map(markers) ?? 0
             return Vector(name: name, check: check, input: input, accepted: accepted, id: id)
         }
-        guard seen == lone else { throw fail("work-id.json već sadrži oznaku neparnog surogata") }
+        // Every decoded string counts, keys and nested values too, so no replaced escape goes unseen.
+        func inTree(_ any: Any) -> Int {
+            if let text = any as? String { return markers(text) }
+            if let list = any as? [Any] { return list.map(inTree).reduce(0, +) }
+            if let object = any as? [String: Any] { return object.map { markers($0.key) + inTree($0.value) }.reduce(0, +) }
+            return 0
+        }
+        guard inTree(top) == lone else { throw fail("work-id.json već sadrži oznaku neparnog surogata") }
         return vectors
     }
 
@@ -344,6 +349,8 @@ extension WorkIdTests {
             [#"{"name":"","check":"isWorkId","input":"doc","accepted":true}"#],
             [v(#""check":"isWorkId","input":"\u0000\uFFFFlone-surrogate\uFFFF\u0000","accepted":false"#)],
             [v(#""check":"isWorkId","input":"\u0000\uFFFFlone-surrogate\uFFFF\u0000\ud800","accepted":false"#)],
+            [v(#""check":"isWorkId","input":["\ud800"],"accepted":false"#), v(#""check":"isWorkId","input":"\u0000\uFFFFlone-surrogate\uFFFF\u0000","accepted":false"#).replacingOccurrences(of: #""x""#, with: #""y""#)],
+            [v(#""check":"isWorkId","input":{"\ud800":1},"accepted":false"#), v(#""check":"isWorkId","input":"\u0000\uFFFFlone-surrogate\uFFFF\u0000","accepted":false"#).replacingOccurrences(of: #""x""#, with: #""y""#)],
         ]
         for list in items { XCTAssertThrowsError(try WorkIdVectors.parse(file(list)), list.joined()) }
         let other = [#"{"vectors":[\#(ok)]}"#, #"{"format":"x","vectors":[\#(ok)]}"#, #"{"format":"ductura-work-id-vectors-v1","vectors":[\#(ok)],"x":1}"#, "[]", ""]
