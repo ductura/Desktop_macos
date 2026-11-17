@@ -1,6 +1,8 @@
 # Ductura / desktop-macos
 
-macOS aplikacija i instalacijski paket. Swift (AppKit za početak, editor kasnije preko WKWebView), paket kao `.dmg` s univerzalnim binarnim (Apple Silicon + Intel).
+macOS aplikacija i instalacijski paket. Swift (AppKit za početak, editor kasnije preko WKWebView; ovisi o odluci 8, otvoreno), paket kao `.dmg` s univerzalnim binarnim (Apple Silicon + Intel).
+
+Plan repozitorija: [docs/PLAN.md](docs/PLAN.md).
 
 ## Funkcionalna provjera
 
