@@ -56,9 +56,11 @@ final class StrictJSONTests: XCTestCase {
         XCTAssertEqual(kind(String(repeating: #"{"a":"#, count: 65) + "1" + String(repeating: "}", count: 65)), .tooDeep)
         XCTAssertEqual(kind(String(repeating: "[", count: 100_000)), .tooDeep)
         XCTAssertEqual(kind(String(repeating: #"{"a":"#, count: 100_000)), .tooDeep)
-        // Positive cases must parse, not merely avoid one error kind (review c.6963458522).
-        XCTAssertNoThrow(try StrictJSON.parse(Data(Self.nested(64).utf8)))
-        XCTAssertNoThrow(try StrictJSON.parse(Data((String(repeating: #"{"a":"#, count: 64) + "1" + String(repeating: "}", count: 64)).utf8)))
+        // Depth 64 must give the exact value down to the innermost level (review c.6963458522, QA c.6963469357).
+        let arrays = (1..<64).reduce(JSONValue.array([])) { inner, _ in .array([inner]) }
+        let objects = (0..<64).reduce(JSONValue.number("1")) { inner, _ in .object([u("a"): inner]) }
+        XCTAssertEqual(try StrictJSON.parse(Data(Self.nested(64).utf8)), arrays)
+        XCTAssertEqual(try StrictJSON.parse(Data((String(repeating: #"{"a":"#, count: 64) + "1" + String(repeating: "}", count: 64)).utf8)), objects)
     }
 
     func testIspravanUlazDajeTocnuVrijednost() throws {
