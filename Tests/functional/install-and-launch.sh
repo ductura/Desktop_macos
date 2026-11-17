@@ -66,7 +66,7 @@ cp -R "$MNT/Ductura.app" "$ODD/"
 xattr -dr com.apple.quarantine "$ODD/Ductura.app" || true
 OUT="$ODD/smoke ishod.txt"
 echo "Korak 5: pokretanje iz $ODD"
-open -W -n -a $ODD/Ductura.app --args --smoke-out "$OUT"  # MUTACIJA: namjerno bez navodnika
+open -W -n -a "$ODD/Ductura.app" --args --smoke-out "$OUT"
 for _ in $(seq 300); do [ -s "$OUT" ] && break; sleep 0.2; done
 grep -q '^Ductura OK' "$OUT" || { echo "Korak 5: Ductura se nije ispravno pokrenula"; exit 1; }
 echo "OK: $(cat "$OUT") iz $ODD"
