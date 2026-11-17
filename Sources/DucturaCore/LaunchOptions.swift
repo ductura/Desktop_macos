@@ -5,9 +5,13 @@ public struct LaunchOptions: Equatable {
     public var smoke = false
     public var smokeOutput: String?
     public var openDocumentId: String?
+    /// `--smoke-window <putanja>`: prozor se gradi, a u datoteku ide `Startup.windowReport` (DAN-957).
+    public var smokeWindowOutput: String?
 
-    public init(smoke: Bool = false, smokeOutput: String? = nil, openDocumentId: String? = nil) {
+    public init(smoke: Bool = false, smokeOutput: String? = nil, openDocumentId: String? = nil,
+                smokeWindowOutput: String? = nil) {
         self.smoke = smoke; self.smokeOutput = smokeOutput; self.openDocumentId = openDocumentId
+        self.smokeWindowOutput = smokeWindowOutput
     }
 
     public static func parse(_ args: [String]) -> LaunchOptions {
@@ -17,10 +21,16 @@ public struct LaunchOptions: Equatable {
             let a = args[i]
             if a == "--smoke" { o.smoke = true }
             else if a == "--smoke-out", i + 1 < args.count { o.smoke = true; i += 1; o.smokeOutput = args[i] }
+            else if a == "--smoke-window", i + 1 < args.count, isPath(args[i + 1]) { i += 1; o.smokeWindowOutput = args[i] }
             else if let rest = linkRest(a) { o.openDocumentId = documentId(linkRest: rest) }
             i += 1
         }
         return o
+    }
+
+    /// Putanja za `--smoke-window`: ni zastavica ni poveznica (`--smoke` ima prednost i prozor se ne gradi).
+    static func isPath(_ arg: String) -> Bool {
+        !arg.isEmpty && !arg.hasPrefix("-") && linkRest(arg) == nil
     }
 
     /// Ostatak iza `ductura://doc/` (prefiks ASCII bez obzira na velika slova) ili `nil`.
