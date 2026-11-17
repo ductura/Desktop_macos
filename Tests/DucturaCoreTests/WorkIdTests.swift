@@ -169,7 +169,11 @@ enum WorkIdVectors {
     /// marker is never ambiguous.
     static func markLoneSurrogates(_ data: Data) throws -> Data {
         let b = [UInt8](data)
-        guard b.first == 0x7B, String(data: data, encoding: .utf8) != nil else { throw fail("work-id.json nije UTF-8 objekt bez BOM-a") }
+        // JSON text has no raw control byte but TAB, LF and CR, so a NUL also refuses UTF-16 and UTF-32,
+        // which JSONSerialization would otherwise detect and accept past the byte scanner.
+        guard b.first == 0x7B, String(data: data, encoding: .utf8) != nil,
+              !b.contains(where: { $0 < 0x20 && $0 != 0x09 && $0 != 0x0A && $0 != 0x0D })
+        else { throw fail("work-id.json nije UTF-8 objekt bez BOM-a i kontrolnih bajtova") }
         let plane16 = fail("work-id.json ima znak ravnine 16")
         if b.contains(0xF4) { throw plane16 }
         func unit(_ at: Int) -> UInt32? {
@@ -318,6 +322,12 @@ extension WorkIdTests {
             XCTAssertThrowsError(try WorkIdVectors.parse(Data(text.utf8)), text)
         }
         XCTAssertThrowsError(try WorkIdVectors.parse(Data([0x7B, 0xFF, 0x7D])))
+        let lone = String(decoding: file([#"{"name":"s","check":"isWorkId","input":"doc\ud800","accepted":true}"#]), as: UTF8.self)
+        for encoding in [String.Encoding.utf16LittleEndian, .utf16BigEndian, .utf32LittleEndian] {
+            XCTAssertThrowsError(try WorkIdVectors.parse(lone.data(using: encoding)!), "\(encoding)")
+            XCTAssertThrowsError(try WorkIdVectors.parse(String(decoding: file([ok]), as: UTF8.self).data(using: encoding)!), "\(encoding)")
+        }
+        XCTAssertThrowsError(try WorkIdVectors.parse(Data(String(decoding: file([ok]), as: UTF8.self).utf8) + Data([0x00])))
     }
 
     func testNeparniSurogat() throws {
