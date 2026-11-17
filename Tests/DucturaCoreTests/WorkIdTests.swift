@@ -184,7 +184,14 @@ enum WorkIdVectors {
         }
         var out: [UInt8] = []
         var at = 0
+        var inString = false
         while at < b.count {
+            if b[at] == 0x22 { inString.toggle() }
+            // Outside strings every number must be a plain integer: a fraction or exponent
+            // (1.0000000000000001) would round to an integer in Double before Int(exactly:) sees it.
+            if !inString, b[at] == 0x2E || b[at] == 0x2B || ((b[at] | 0x20) == 0x65 && at > 0 && (0x30...0x39).contains(b[at - 1])) {
+                throw fail("work-id.json ima broj koji nije cijeli")
+            }
             guard b[at] == 0x5C, at + 1 < b.count else { out.append(b[at]); at += 1; continue }
             guard let u = unit(at) else { out += b[at...(at + 1)]; at += 2; continue }
             if (0xD800...0xDBFF).contains(u), let low = unit(at + 6), (0xDC00...0xDFFF).contains(low) {
@@ -300,6 +307,8 @@ extension WorkIdTests {
     func testNeispravnaDatotekaVektoraSeOdbija() {
         let ok = #"{"name":"a\r\n\tb","check":"isWorkId","input":"doc","accepted":true}"#
         XCTAssertTrue(runs([ok]))
+        // Inside strings dots, plus signs and exponents are text: `\"` does not end the string.
+        XCTAssertTrue(runs([#"{"name":"1.5e3+ \"9.0E1\"","check":"isWorkId","input":"a1.5e3+\"","accepted":true}"#]))
         func v(_ fields: String) -> String { #"{"name":"x",\#(fields)}"# }
         let items = [
             [ok, ok], [], [v(#""check":"isWorkId","input":"doc","accepted":true,"__proto__":{}"#)],
@@ -307,6 +316,9 @@ extension WorkIdTests {
             [v(#""check":"isWorkId","input":"doc","repeat":{"text":"d","count":1},"accepted":true"#)], [v(#""check":"isWorkId","accepted":true"#)],
             [v(#""check":"isWorkId","repeat":{"text":"d","count":0},"accepted":true"#)], [v(#""check":"isWorkId","repeat":{"text":"d","count":1025},"accepted":false"#)],
             [v(#""check":"isWorkId","repeat":{"text":"d","count":1.5},"accepted":true"#)], [v(#""check":"isWorkId","repeat":{"text":"d","count":true},"accepted":true"#)],
+            [v(#""check":"isWorkId","repeat":{"text":"d","count":1.0000000000000001},"accepted":true"#)], [v(#""check":"isWorkId","repeat":{"text":"d","count":1.0},"accepted":true"#)],
+            [v(#""check":"isWorkId","repeat":{"text":"d","count":1e0},"accepted":true"#)], [v(#""check":"isWorkId","repeat":{"text":"d","count":10E-1},"accepted":true"#)],
+            [v(#""check":"isWorkId","repeat":{"text":"d","count":+1},"accepted":true"#)],
             [v(#""check":"isWorkId","repeat":{"text":"d","count":"1"},"accepted":true"#)], [v(#""check":"isWorkId","repeat":{"text":"","count":1},"accepted":false"#)],
             [v(#""check":"isWorkId","repeat":{"text":"d","count":1,"x":1},"accepted":true"#)], [v(#""check":"isWorkId","input":"doc","accepted":1"#)],
             [v(#""check":"isWorkId","input":"doc","accepted":"true""#)], [v(#""check":"isWorkId","input":"doc""#)],
