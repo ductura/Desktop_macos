@@ -18,11 +18,13 @@ Pokriva je `Tests/functional/install-and-launch.sh`: kopija paketa s oznakom kar
 | `Sources/DucturaCore/WebAddress.swift` | Provjera adrese weba iz `Info.plist` (DAN-883) |
 | `Sources/DucturaCore/Startup.swift` | Ishod `--smoke`, adresa za WKWebView ili poruka (`windowContent`) i redak `--smoke-window` |
 | `Sources/DucturaCore/Navigation.swift` | Pravilo navigacije za WKWebView (DAN-961): host s popisa ostaje u ljusci, drugi `https` host ide u preglednik, ostalo se odbija. Još nije spojeno na `decidePolicyFor`. |
+| `Sources/DucturaCore/Contracts.generated.swift` | Klijent ugovora (DAN-959), generiran iz OpenAPI-ja zaključanog `@ductura/contracts`; zasad samo `health`. Ne uređuje se ručno. |
 | `Sources/Ductura` | macOS aplikacija |
 | `Tests/DucturaCoreTests` | Testovi pomoćnih funkcija (XCTest) |
 | `Tests/functional` | Funkcionalni test instalacije |
 | `scripts/build-dmg.sh` | Izrada `Ductura.app` i `dist/Ductura-macOS.dmg` |
-| `scripts/ci-ok.test.mjs` | Test obvezne zbirne provjere `ci-ok` u `.github/workflows/ci.yml` (`npm ci` pa `node --test`, u CI-ju na Linuxu). `package.json` i `package-lock.json` služe samo tom testu (YAML parser `yaml`); aplikacija ne koristi Node. |
+| `scripts/ci-ok.test.mjs` | Test obvezne zbirne provjere `ci-ok` u `.github/workflows/ci.yml` (`npm ci` pa `node --test`, u CI-ju na Linuxu). `package.json` i `package-lock.json` služe samo Node provjerama u CI-ju (YAML parser `yaml`); aplikacija ne koristi Node. |
+| `contracts.lock.json`, `scripts/contracts.mjs` | Zaključana verzija `@ductura/contracts` (URL `.tgz` s GitHub Releasea servera i sha256) i generator Swifta bez ovisnosti. `node scripts/contracts.mjs --write` regenerira klijent; `--check` u CI-ju pada (izlaz 1) kad se commitani Swift i zaključani OpenAPI razilaze, a izlaz 2 znači da tarball nije upotrebljiv (mreža, sha256, sadržaj). Testovi: `scripts/contracts.test.mjs`. |
 
 ## Adresa weba
 
