@@ -43,7 +43,7 @@ Repo posjeduje i paket, potpis i notarizaciju kod Applea (ovisi o potpisu) te pr
 
 ## 2. Zatečeno stanje (kostur, 17. 11.)
 
-- Swift. AppKit prozor s poveznicom na web (`Sources/Ductura`). Pomoćne funkcije su u `Sources/DucturaCore` (`LaunchOptions`, `Packaging`, `WorkId`, `WebAddress`, `Startup`).
+- Swift. AppKit prozor s WKWebView koji učitava provjerenu adresu (`Sources/Ductura`; spike D-0.1, DAN-957). Pomoćne funkcije su u `Sources/DucturaCore` (`LaunchOptions`, `Packaging`, `WorkId`, `WebAddress`, `Startup`).
 - Spojeni PR-ovi:
   - #1, DAN-885: `ci-ok`;
   - #2, DAN-880: skeniranje tajni i pregled ovisnosti iz `ductura/.github`;
@@ -55,7 +55,7 @@ Repo posjeduje i paket, potpis i notarizaciju kod Applea (ovisi o potpisu) te pr
   - `scripts/ci-ok.test.mjs` (Node, samo za `ci-ok`).
 - Paket: `scripts/build-dmg.sh` gradi `dist/Ductura-macOS.dmg` s univerzalnim binarnim (Apple Silicon i Intel), macOS 13 ili noviji. Paket je **potpisan samo ad-hoc** i nije notariziran, pa Gatekeeper blokira prvo pokretanje.
 - Adresa weba `https://ductura.org/app/` je zadana vrijednost dok se ne odluči V-0 (domena).
-- Još nema web paketa u ljusci, ugovornog klijenta, prijave tokom ni ažuriranja.
+- Još nema web paketa u ljusci, prijave tokom ni ažuriranja. Ugovorni klijent ima samo `health` (DAN-959): Swift generiran iz OpenAPI-ja zaključanog `@ductura/contracts` (`contracts.lock.json`), bez vektora. Gradi na zatečenom kosturu i ne donosi odluku 8.
 
 ## 3. Sadržaj (PRIJEDLOG; ovisi o odluci 8)
 
@@ -121,7 +121,7 @@ Koraci bez ID-a su PRIJEDLOG: ID dodjeljuje orkestrator.
   - obvezni `ci-ok`.
 - **Kasnije:**
   - reusable `ci-swift` iz `ductura/.github` (ime vrijedi samo uz put A, ovisi o odluci 8);
-  - posao ugovora;
+  - vektori ugovora (provjera da generirani klijent odgovara zaključanom OpenAPI-ju već je u `ci-ok-test`, DAN-959);
   - izdanje na oznaku `vX.Y.Z` kao potpisani paket u GitHub Releaseu (migracija §5; ovisi o potpisu).
 - **Risk (PRIJEDLOG):** `.github/**` je `critical`, kao u drugim repoima. Ostale putanje dodjeljuje tablica rizika.
 - **Vlasničke radnje:**

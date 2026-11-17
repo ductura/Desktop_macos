@@ -2,6 +2,7 @@ import Foundation
 import DucturaCore
 #if canImport(AppKit)
 import AppKit
+import WebKit
 #endif
 
 let options = LaunchOptions.parse(Array(CommandLine.arguments.dropFirst()))
@@ -20,28 +21,63 @@ if options.smoke {
 }
 
 #if canImport(AppKit)
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     var window: NSWindow!
     func applicationDidFinishLaunching(_ notification: Notification) {
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 960, height: 640),
                           styleMask: [.titled, .closable, .miniaturizable, .resizable],
                           backing: .buffered, defer: false)
         window.title = Packaging.productName
-        // Fail closed: without a checked address there is no button, only the message.
-        let view: NSView = Startup.linkURL(options: options, web: web) == nil
-            ? NSTextField(labelWithString: Startup.invalidAddressText)
-            : NSButton(title: "Otvori Ducturu", target: self, action: #selector(openWeb))
-        view.frame = NSRect(x: 24, y: 560, width: 480, height: 32)
-        window.contentView?.addSubview(view)
+        // Fail closed: without a checked address there is no WKWebView, only the message (DAN-957).
+        let view: NSView
+        switch Startup.windowContent(options: options, web: web) {
+        case .web(let url):
+            let webView = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
+            webView.navigationDelegate = self
+            webView.load(URLRequest(url: url))
+            view = webView
+        case .message(let text):
+            let label = NSTextField(labelWithString: text)
+            label.frame = NSRect(x: 24, y: 560, width: 480, height: 32)
+            view = NSView()
+            view.addSubview(label)
+        }
+        window.contentView = view
         window.center()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
-        // Sljedeći korak: ugraditi editor (WKWebView) umjesto gumba.
+        // A WKWebView is reported only once WebKit asks about its navigation; without one, `error`.
+        guard options.smokeWindowOutput != nil else { return }
+        let delay: TimeInterval = view is WKWebView ? 30 : 0
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { self.reportWindow() }
     }
-    @objc func openWeb() {
-        // ID ulazi u URL samo kodiran i samo ako prolazi pravilo ugovora (WorkId).
-        guard let url = Startup.linkURL(options: options, web: web) else { return }
-        NSWorkspace.shared.open(url)
+    /// Per WKWebView: URL of the main-frame navigation WebKit actually started (decidePolicyFor),
+    /// never the URL we meant to load.
+    var observed: [ObjectIdentifier: URL] = [:]
+    var reported = false
+    func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
+                 decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        decisionHandler(.allow)
+        if navigationAction.targetFrame?.isMainFrame == true, observed[ObjectIdentifier(webView)] == nil {
+            observed[ObjectIdentifier(webView)] = navigationAction.request.url
+            if options.smokeWindowOutput != nil { reportWindow() }
+        }
+    }
+    /// Functional test: report what the window really contains, then quit.
+    func reportWindow() {
+        guard let out = options.smokeWindowOutput, !reported else { return }
+        reported = true
+        var views: [NSView] = window.contentView.map { [$0] } ?? []
+        var webViews: [URL?] = [], messages: [String] = []
+        while let v = views.popLast() {
+            // WebKit's own subviews are not ours to count.
+            if let w = v as? WKWebView { webViews.append(observed[ObjectIdentifier(w)]); continue }
+            if let t = v as? NSTextField { messages.append(t.stringValue) }
+            views += v.subviews
+        }
+        let line = Startup.windowReport(webViews: webViews, messages: messages)
+        try? (line + "\n" + Bundle.main.bundlePath + "\n").write(toFile: out, atomically: true, encoding: .utf8)
+        NSApp.terminate(nil)
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 }
