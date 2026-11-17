@@ -17,6 +17,7 @@ Pokriva je `Tests/functional/install-and-launch.sh`: kopija paketa s oznakom kar
 | `Sources/DucturaCore/WorkId.swift` | ID rada iz poveznice `ductura://doc/<id>` po pravilu ugovora S-1H.1-c (isto kao serverski `work-id.ts`) i URL s kodiranim ID-om |
 | `Sources/DucturaCore/WebAddress.swift` | Provjera adrese weba iz `Info.plist` (DAN-883) |
 | `Sources/DucturaCore/Startup.swift` | Ishod `--smoke` i poveznica prema provjerenoj adresi |
+| `Sources/DucturaCore/Navigation.swift` | Pravilo navigacije za WKWebView (DAN-961): host s popisa ostaje u ljusci, drugi `https` host ide u preglednik, ostalo se odbija. Još nije spojeno na `decidePolicyFor`. |
 | `Sources/Ductura` | macOS aplikacija |
 | `Tests/DucturaCoreTests` | Testovi pomoćnih funkcija (XCTest) |
 | `Tests/functional` | Funkcionalni test instalacije |
