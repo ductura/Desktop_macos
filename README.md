@@ -46,8 +46,8 @@ Nalazi (CI `macos-latest`):
 
 | Pitanje | Nalaz |
 |---|---|
-| Veličina paketa | Prije (`main` 0a6d2f5): artefakt `.dmg` 92 266 B. Poslije: __SIZE__ |
-| Sandbox | Paket nije u App Sandboxu: potpisan je ad-hoc bez entitlementsa (`codesign -d --entitlements -` u logu funkcionalnog testa). WebKit je sustavni okvir, pa se ne pakira. |
+| Veličina paketa | Artefakt CI-ja s `.dmg`: 92 266 B na `main` 0a6d2f5, 115 043 B s WKWebView (+23 KB). `du -k` u funkcionalnom testu: `Ductura.app` 372 KB, `.dmg` 128 KB. WebKit je sustavni okvir, pa se ne pakira; razlika je samo kod ljuske. |
+| Sandbox | Paket nije u App Sandboxu: potpisan je ad-hoc, a `codesign -d --entitlements -` u logu funkcionalnog testa ne ispisuje nijedno pravo. |
 | Mrežna prava | Bez sandboxa WKWebView smije na mrežu bez dodatnih prava. Uz App Sandbox paket treba `com.apple.security.network.client`, inače se stranica ne učitava. |
 | ATS | Nije provjereno: `http` adresu odbija već `WebAddress`, prije WKWebView-a. |
 | Što ne ulazi | Prijava, nadogradnje, potpis i notarizacija; pravila navigacije (`decidePolicyFor`, DAN-961). |

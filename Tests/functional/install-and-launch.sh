@@ -36,7 +36,9 @@ window_report() { # <aplikacija> <očekivani redak>
     pkill -f "$app/Contents/MacOS/Ductura" || true
     echo "Ductura se nije ugasila ($app)"; exit 1
   fi
-  test -f "$out" || { echo "Nema izvještaja prozora ($app)"; exit 1; }
+  # `open -W` ponekad ne može čekati („Unable to block on application”): čekaj datoteku do 60 s.
+  for _ in $(seq 300); do [ -s "$out" ] && break; sleep 0.2; done
+  test -s "$out" || { echo "Nema izvještaja prozora ($app)"; exit 1; }
   [ "$(sed -n 1p "$out")" = "$want" ] || { echo "Prozor ($app): $(cat "$out"), očekivano: $want"; exit 1; }
   [ "$(sed -n 2p "$out")" = "$app" ] || { echo "Pokrenut je drugi paket: $(sed -n 2p "$out")"; exit 1; }
 }
