@@ -9,7 +9,7 @@ final class HealthVectorMutationTests: XCTestCase {
         let vectors = try TestFakesRelease.release.get()
         XCTAssertNoThrow(try TestFakesRelease.check(vectors))
         let newer = Data(#"{"status":"ok","minClientVersion":"9.0.0"}"#.utf8)
-        // Thresholds that both table clients (1.0.0, 0.9.9) still pass, but 0.9.8 would not.
+        // Thresholds that both table clients (1.0.0, 0.9.9) still pass; 0.9.9 would refuse a 0.9.8 client.
         let lower = ["0.0.0", "0.9.9"].map { Data(#"{"status":"ok","minClientVersion":"\#($0)"}"#.utf8) }
         for (index, vector) in vectors.enumerated() {
             let changed = [
