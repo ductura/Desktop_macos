@@ -8,6 +8,7 @@ Plan repozitorija: [docs/PLAN.md](docs/PLAN.md).
 
 Korisnik preuzima odgovarajući paket i pokreće Ducturu iz mape Aplikacije.
 Pokriva je `Tests/functional/install-and-launch.sh`: kopija paketa s oznakom karantene, otvaranje `.dmg`, kopiranje u `/Applications` i pokretanje preko `open` (`--smoke-out`). Radi samo na macOS-u i pokreće se u CI-ju.
+Drugi prolaz (DAN-998) kopira paket iz `.dmg` u izmišljenu mapu `Ductura test/Šđčćž mapa` i pokreće ga odande. Putanju paketa iz `--smoke-window` uspoređuje u NFD obliku, jer APFS čuva oblik imena kakav je zadan. Kontrola potvrđuje da se paket iz `/Applications` odbija kad se očekuje onaj iz te mape.
 
 ## Struktura
 
