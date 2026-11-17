@@ -129,6 +129,12 @@ enum WorkIdVectors {
     static let format = "ductura-work-id-vectors-v1"
     /// Pinned by "check:accepted", so a vector that disappears or appears fails.
     static let counts = ["isWorkId:true": 11, "isWorkId:false": 23, "workIdFromPath:true": 5, "workIdFromPath:false": 9]
+    /// sha256 of the sorted names joined by "\n", so a vector swapped for another of the same class fails too.
+    static let names = "879ab64f7bfaf679886d6a2949a344270927477ddf39c1007ff58546b7c8c50b"
+
+    static func namesHash(_ vectors: [Vector]) -> String {
+        SHA256.hash(data: Data(vectors.map(\.name).sorted().joined(separator: "\n").utf8)).map { String(format: "%02x", $0) }.joined()
+    }
 
     static func fail(_ text: String) -> VectorsError { VectorsError(description: text) }
 
@@ -163,6 +169,7 @@ enum WorkIdVectors {
     /// marker is never ambiguous.
     static func markLoneSurrogates(_ data: Data) throws -> Data {
         let b = [UInt8](data)
+        guard b.first == 0x7B, String(data: data, encoding: .utf8) != nil else { throw fail("work-id.json nije UTF-8 objekt bez BOM-a") }
         let plane16 = fail("work-id.json ima znak ravnine 16")
         if b.contains(0xF4) { throw plane16 }
         func unit(_ at: Int) -> UInt32? {
@@ -278,7 +285,7 @@ extension WorkIdTests {
         XCTAssertNoThrow(try WorkIdVectors.parseLock(Data(contentsOf: TestFakesRelease.root.appendingPathComponent("contracts.lock.json"))))
         let bad = [
             json("2.7"), json("2.7.1"), json(" 2.7.0"), json(u: url + "?x"), json(u: url.replacingOccurrences(of: "https", with: "http")),
-            json(s: String(repeating: "A", count: 64)), json(s: String(sha.dropLast())), json(s: String(sha.dropLast()) + "\u{A0}"),
+            json(s: String(repeating: "A", count: 64)), json(s: String(sha.dropLast())), json(s: String(sha.dropLast()) + "\u{A0}"), json(s: String(sha.dropLast()) + "g"),
             json(s: String(sha.dropLast()) + "\u{7F}"), json(s: String(sha.dropLast()) + #"\t"#), json(ops: "[]"), json(ops: #"["a","a"]"#),
             json(ops: "[1]"), json(ops: "null"), json(extra: #","__proto__":{}"#), json(extra: #","toString":1"#),
             #"{"version":"2.7.0","url":"\#(url)","sha256":"\#(sha)"}"#, "[]", "",
@@ -307,7 +314,10 @@ extension WorkIdTests {
         ]
         for list in items { XCTAssertThrowsError(try WorkIdVectors.parse(file(list)), list.joined()) }
         let other = [#"{"vectors":[\#(ok)]}"#, #"{"format":"x","vectors":[\#(ok)]}"#, #"{"format":"ductura-work-id-vectors-v1","vectors":[\#(ok)],"x":1}"#, "[]", ""]
-        for text in other { XCTAssertThrowsError(try WorkIdVectors.parse(Data(text.utf8)), text) }
+        for text in other + ["\u{FEFF}" + String(decoding: file([ok]), as: UTF8.self), " " + String(decoding: file([ok]), as: UTF8.self)] {
+            XCTAssertThrowsError(try WorkIdVectors.parse(Data(text.utf8)), text)
+        }
+        XCTAssertThrowsError(try WorkIdVectors.parse(Data([0x7B, 0xFF, 0x7D])))
     }
 
     func testNeparniSurogat() throws {
@@ -323,6 +333,9 @@ extension WorkIdTests {
         let pair = try WorkIdVectors.parse(file([vector(#"\ud83d\ude00"#, true)]))
         XCTAssertEqual(pair.first?.input as? String, "\u{1F600}")
         XCTAssertThrowsError(try WorkIdVectors.parse(file([#"{"name":"r","check":"isWorkId","repeat":{"text":"\ud800","count":1},"accepted":false}"#])))
+        // A marker in the id would equal a decoded U+100000 from the path; in a name it hides a lone surrogate.
+        XCTAssertThrowsError(try WorkIdVectors.parse(file([#"{"name":"i","check":"workIdFromPath","input":"%F4%80%80%80","accepted":true,"id":"\ud800"}"#])))
+        XCTAssertThrowsError(try WorkIdVectors.parse(file([#"{"name":"n\ud800","check":"isWorkId","input":"doc","accepted":true}"#])))
     }
 
     func testPromijenjenVektorRusiProvjeru() throws {
@@ -344,6 +357,8 @@ extension WorkIdTests {
     }
 
     func testSvakiVektorIdaRadaIzZakljucanogUgovora() throws {
-        XCTAssertEqual(try WorkIdVectors.run(WorkIdVectors.release.get()), WorkIdVectors.counts)
+        let vectors = try WorkIdVectors.release.get()
+        XCTAssertEqual(try WorkIdVectors.run(vectors), WorkIdVectors.counts)
+        XCTAssertEqual(WorkIdVectors.namesHash(vectors), WorkIdVectors.names)
     }
 }
