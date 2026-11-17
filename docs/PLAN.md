@@ -55,7 +55,7 @@ Repo posjeduje i paket, potpis i notarizaciju kod Applea (ovisi o potpisu) te pr
   - `scripts/ci-ok.test.mjs` (Node, samo za `ci-ok`).
 - Paket: `scripts/build-dmg.sh` gradi `dist/Ductura-macOS.dmg` s univerzalnim binarnim (Apple Silicon i Intel), macOS 13 ili noviji. Paket je **potpisan samo ad-hoc** i nije notariziran, pa Gatekeeper blokira prvo pokretanje.
 - Adresa weba `https://ductura.org/app/` je zadana vrijednost dok se ne odluči V-0 (domena).
-- Još nema web paketa u ljusci, prijave tokom ni ažuriranja. Ugovorni klijent ima samo `health` (DAN-959): Swift generiran iz OpenAPI-ja zaključanog `@ductura/contracts` (`contracts.lock.json`); `health` vektori iz zaključanog `@ductura/test-fakes` (`test-fakes.lock.json`) prolaze u `swift test` (DAN-999). Gradi na zatečenom kosturu i ne donosi odluku 8.
+- Još nema web paketa u ljusci, prijave tokom ni ažuriranja. Ugovorni klijent ima samo `health` (DAN-959): Swift generiran iz OpenAPI-ja zaključanog `@ductura/contracts` (`contracts.lock.json`); `health` vektori iz zaključanog `@ductura/test-fakes` (`test-fakes.lock.json`) prolaze u `swift test` (DAN-999), kao i vektori ID-a rada iz zaključanog `@ductura/contracts` (DAN-1001). Gradi na zatečenom kosturu i ne donosi odluku 8.
 
 ## 3. Sadržaj (PRIJEDLOG; ovisi o odluci 8)
 
