@@ -35,8 +35,8 @@ final class StrictJSONTests: XCTestCase {
     ]
 
     static let duplicateKey: [String] = [
-        #"{"a":1,"a":2}"#, #"{"a":1,"a":1}"#, #"{"\ud800":1,"\uD800":2}"#, #"{"x":{"b":1,"b":1}}"#,
-        #"[{"a":1,"a":1}]"#, #"{"😀":1,"😀":2}"#, #"{"__proto__":1,"__proto__":2}"#,
+        #"{"a":1,"a":2}"#, #"{"a":1,"\u0061":1}"#, #"{"\ud800":1,"\uD800":2}"#, #"{"x":{"b":1,"b":1}}"#,
+        #"[{"a":1,"a":1}]"#, #"{"😀":1,"\ud83d\ude00":2}"#, #"{"__proto__":1,"__proto__":2}"#,
     ]
 
     static func nested(_ depth: Int) -> String { String(repeating: "[", count: depth) + String(repeating: "]", count: depth) }
@@ -62,15 +62,26 @@ final class StrictJSONTests: XCTestCase {
             ("1.0000000000000001", .number("1.0000000000000001")), (long, .number(long)),
             ("true", .bool(true)), ("false", .bool(false)), ("null", .null), ("[]", .array([])), ("{}", .object([:])),
             ("\"\u{7F}\u{A0}č\"", .string([0x7F, 0xA0, 0x10D])),
-            (#""𐀀x\udc00""#, .string([0xD800, 0xDC00, 0x78, 0xDC00])),
-            (#""😀""#, .string(u("😀"))), ("\"😀\"", .string(u("😀"))),
-            (#""\"\\\/\b\f\n\r\téé""#, .string([0x22, 0x5C, 0x2F, 0x08, 0x0C, 0x0A, 0x0D, 0x09, 0xE9, 0xE9])),
+            (#""\ud800\uDC00x\udc00""#, .string([0xD800, 0xDC00, 0x78, 0xDC00])),
+            (#""\ud83d\ude00""#, .string(u("😀"))), ("\"😀\"", .string(u("😀"))),
+            (#""\"\\\/\b\f\n\r\t\u00e9\u00E9\u0041""#, .string([0x22, 0x5C, 0x2F, 0x08, 0x0C, 0x0A, 0x0D, 0x09, 0xE9, 0xE9, 0x41])),
             (#"{"\ud800":1,"__proto__":null,"toString":true,"constructor":[]}"#,
              .object([[0xD800]: .number("1"), u("__proto__"): .null, u("toString"): .bool(true), u("constructor"): .array([])])),
             (#"[{"a":1},{"a":2}]"#, .array([.object([u("a"): .number("1")]), .object([u("a"): .number("2")])])),
             (#"{"input":0,"accepted":false}"#, .object([u("input"): .number("0"), u("accepted"): .bool(false)])),
         ]
         for (text, value) in cases { XCTAssertEqual(try StrictJSON.parse(Data(text.utf8)), value, text) }
+    }
+
+    /// The offset is in UTF-16 units of the decoded text: 😀 before the error counts as 2.
+    func testGreskaNosiPomakUJedinicama() {
+        func at(_ text: String) -> Int? {
+            do { _ = try StrictJSON.parse(Data(text.utf8)); return nil } catch { return (error as? StrictJSONError)?.at }
+        }
+        XCTAssertEqual(at(#"{"a":1,"a":2}"#), 7)
+        XCTAssertEqual(at("[\"😀\",]"), 6)
+        XCTAssertEqual(at(Self.nested(StrictJSON.maxDepth + 1)), StrictJSON.maxDepth)
+        XCTAssertEqual(at("[1,\u{0}]"), 0)
     }
 
     func testSvakaVrstaGreskeImaTekst() {
