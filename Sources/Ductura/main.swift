@@ -2,6 +2,7 @@ import Foundation
 import DucturaCore
 #if canImport(AppKit)
 import AppKit
+import WebKit
 #endif
 
 let options = LaunchOptions.parse(Array(CommandLine.arguments.dropFirst()))
@@ -27,21 +28,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                           styleMask: [.titled, .closable, .miniaturizable, .resizable],
                           backing: .buffered, defer: false)
         window.title = Packaging.productName
-        // Fail closed: without a checked address there is no button, only the message.
-        let view: NSView = Startup.linkURL(options: options, web: web) == nil
-            ? NSTextField(labelWithString: Startup.invalidAddressText)
-            : NSButton(title: "Otvori Ducturu", target: self, action: #selector(openWeb))
-        view.frame = NSRect(x: 24, y: 560, width: 480, height: 32)
-        window.contentView?.addSubview(view)
+        // Fail closed: without a checked address there is no WKWebView, only the message (DAN-957).
+        let view: NSView
+        switch Startup.windowContent(options: options, web: web) {
+        case .web(let url):
+            let webView = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
+            webView.load(URLRequest(url: url))
+            requested = url
+            view = webView
+        case .message(let text):
+            let label = NSTextField(labelWithString: text)
+            label.frame = NSRect(x: 24, y: 560, width: 480, height: 32)
+            view = NSView()
+            view.addSubview(label)
+        }
+        window.contentView = view
         window.center()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
-        // Sljedeći korak: ugraditi editor (WKWebView) umjesto gumba.
+        if let out = options.smokeWindowOutput {
+            DispatchQueue.main.async { self.reportWindow(to: out) }
+        }
     }
-    @objc func openWeb() {
-        // ID ulazi u URL samo kodiran i samo ako prolazi pravilo ugovora (WorkId).
-        guard let url = Startup.linkURL(options: options, web: web) else { return }
-        NSWorkspace.shared.open(url)
+    var requested: URL?
+    /// Functional test: report what the window really contains, then quit.
+    func reportWindow(to out: String) {
+        var views: [NSView] = window.contentView.map { [$0] } ?? []
+        var webViews: [URL?] = [], messages: [String] = []
+        while let v = views.popLast() {
+            // WebKit's own subviews are not ours to count.
+            if let w = v as? WKWebView { webViews.append(w.url ?? requested); continue }
+            if let t = v as? NSTextField { messages.append(t.stringValue) }
+            views += v.subviews
+        }
+        let line = Startup.windowReport(webViews: webViews, messages: messages)
+        try? (line + "\n" + Bundle.main.bundlePath + "\n").write(toFile: out, atomically: true, encoding: .utf8)
+        NSApp.terminate(nil)
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 }

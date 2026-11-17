@@ -43,7 +43,7 @@ Repo posjeduje i paket, potpis i notarizaciju kod Applea (ovisi o potpisu) te pr
 
 ## 2. Zatečeno stanje (kostur, 17. 11.)
 
-- Swift. AppKit prozor s poveznicom na web (`Sources/Ductura`). Pomoćne funkcije su u `Sources/DucturaCore` (`LaunchOptions`, `Packaging`, `WorkId`, `WebAddress`, `Startup`).
+- Swift. AppKit prozor s WKWebView koji učitava provjerenu adresu (`Sources/Ductura`; spike D-0.1, DAN-957). Pomoćne funkcije su u `Sources/DucturaCore` (`LaunchOptions`, `Packaging`, `WorkId`, `WebAddress`, `Startup`).
 - Spojeni PR-ovi:
   - #1, DAN-885: `ci-ok`;
   - #2, DAN-880: skeniranje tajni i pregled ovisnosti iz `ductura/.github`;
