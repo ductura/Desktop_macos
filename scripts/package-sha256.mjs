@@ -72,17 +72,33 @@ function recordedHash() {
 function writeHash(sha) {
   const temp = `dist/.${NAME}.sha256.${randomBytes(8).toString('hex')}.tmp`;
   const fd = openSync(temp, O_WRONLY | O_CREAT | O_EXCL);
+  // The first error is the one reported; a failing close or clean-up never
+  // replaces it. On any failure the temporary file is removed if possible.
+  let failure;
   try {
-    try {
-      if (writeSync(fd, `${sha}  ${NAME}\n`, 0) !== LINE_BYTES) throw new Error(`${temp}: short write`);
-    } finally {
-      closeSync(fd);
-    }
-    renameSync(temp, SIDECAR);
+    if (writeSync(fd, `${sha}  ${NAME}\n`, 0) !== LINE_BYTES) throw new Error(`${temp}: short write`);
   } catch (error) {
-    unlinkSync(temp);
-    throw error;
+    failure = error;
   }
+  try {
+    closeSync(fd);
+  } catch (error) {
+    failure ??= error;
+  }
+  if (!failure) {
+    try {
+      renameSync(temp, SIDECAR);
+      return;
+    } catch (error) {
+      failure = error;
+    }
+  }
+  try {
+    unlinkSync(temp);
+  } catch {
+    // Keep the first error; the temporary name starts with a dot and is never uploaded.
+  }
+  throw failure;
 }
 
 async function main(args) {

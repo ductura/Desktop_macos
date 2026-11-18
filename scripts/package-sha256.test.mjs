@@ -235,9 +235,11 @@ test('writing over a dangling .sha256 link does not create its target', within((
 // test knows it. With that name free, writing works and leaves no temp file.
 const FIXED = `import crypto from 'node:crypto';\nimport { syncBuiltinESMExports } from 'node:module';\n`
   + `crypto.randomBytes = (n) => Buffer.alloc(n, 0xab);\nsyncBuiltinESMExports();\n`;
-const runFixed = (dir, ...args) => {
+// Extra preload lines patch node:fs to make one step of the write fail.
+const runFixed = (dir, ...args) => runPatched(dir, '', ...args);
+const runPatched = (dir, patch, ...args) => {
   const preload = join(dirname(dir), `${basename(dir)}-fixed.mjs`);
-  writeFileSync(preload, FIXED);
+  writeFileSync(preload, `${FIXED}import fs from 'node:fs';\n${patch}\nsyncBuiltinESMExports();\n`);
   try {
     const r = spawnSync(process.execPath, ['--import', pathToFileURL(preload).href, SCRIPT, ...args], { cwd: dir, encoding: 'utf8', timeout: 20_000 });
     return { code: r.status, out: r.stdout + r.stderr };
@@ -252,6 +254,39 @@ test('with a free temporary name writing succeeds and leaves only the pair', wit
   isPlainSidecar(dir);
   onlyPair(dir);
 }));
+
+// Without the preload the name is random, so a file at the fixed name is
+// neither hit nor changed: a hard-coded temporary name fails here.
+test('the temporary name is not fixed: a file at the test name stays and writing succeeds', within((dir) => {
+  writeFileSync(temp(dir), 'keep');
+  assert.equal(run(dir).code, 0);
+  assert.equal(readFileSync(temp(dir), 'utf8'), 'keep');
+  isPlainSidecar(dir);
+}));
+
+// A failing step exits 2 with its own error, leaves the old .sha256 as it was
+// and removes the temporary file; a failing clean-up does not hide the error.
+const OLD = `${'0'.repeat(64)}  ${NAME}\n`;
+const FAULTS = [
+  ['a short write', 'const w = fs.writeSync; fs.writeSync = (fd, s, p) => w(fd, String(s).slice(0, 10), p);', /short write/, true],
+  ['a failing write', "fs.writeSync = () => { throw Object.assign(new Error('ENOSPC fake'), { code: 'ENOSPC' }); };", /ENOSPC/, true],
+  ['a failing write and close', "let failed = false; const c = fs.closeSync;\n"
+    + "fs.writeSync = () => { failed = true; throw Object.assign(new Error('ENOSPC fake'), { code: 'ENOSPC' }); };\n"
+    + "fs.closeSync = (fd) => { c(fd); if (failed) throw Object.assign(new Error('EIO fake'), { code: 'EIO' }); };", /ENOSPC/, true],
+  ['a failing rename and clean-up', "fs.renameSync = () => { throw Object.assign(new Error('EXDEV fake'), { code: 'EXDEV' }); };\n"
+    + "fs.unlinkSync = () => { throw Object.assign(new Error('EACCES fake'), { code: 'EACCES' }); };", /EXDEV/, false],
+];
+for (const [what, patch, message, cleaned] of FAULTS) {
+  test(`writing with ${what} exits 2 and keeps the old .sha256`, within((dir) => {
+    writeFileSync(sidecar(dir), OLD);
+    const r = runPatched(dir, patch);
+    assert.equal(r.code, 2, r.out);
+    assert.match(r.out, message);
+    assert.equal(readFileSync(sidecar(dir), 'utf8'), OLD);
+    unchanged(join(dir, 'dist', NAME));
+    if (cleaned) distPair(dir);
+  }));
+}
 
 // After the refusal the entry at the temporary path is still exactly what it was.
 const TEMP_TAKEN = [
@@ -347,7 +382,7 @@ function ciProblems(wf) {
   if (hashSteps !== 2) problems.push(`hash steps: ${hashSteps}`);
   const verify = at((s) => s?.run === VERIFY, 'verify');
   // Any upload-artifact action (also /merge), in build-test exactly once.
-  const uploads = (s) => /^actions\/upload-artifact[/@]/.test(s?.uses ?? '');
+  const uploads = (s) => /^actions\/upload-artifact[/@]/i.test(s?.uses ?? '');
   const upload = at(uploads, 'upload');
   // ... and that one is the plain action on a full SHA, not a sub-action such
   // as /merge, which takes no paths and would upload no pair.
@@ -356,6 +391,10 @@ function ciProblems(wf) {
   // spelling of the name (trailing space, expression).
   for (const [job, j] of Object.entries(wf?.jobs ?? {})) {
     if (job !== 'build-test' && (j?.steps ?? []).some(uploads)) problems.push(`${job} uploads an artifact`);
+    // A local action or workflow could wrap an upload out of sight.
+    for (const u of [j?.uses, ...(j?.steps ?? []).map((s) => s?.uses)]) {
+      if (typeof u === 'string' && u.startsWith('./')) problems.push(`${job} uses a local action`);
+    }
   }
   if (!(node < build && write === build + 1 && functional > write && verify > functional && upload === verify + 1)) {
     problems.push('order');
@@ -432,6 +471,11 @@ const MUTATIONS = [
   ].map(([what, uses, name]) => [`another job uploads with ${what}`, 'late uploads an artifact', (wf) => {
     wf.jobs.late = { 'runs-on': 'ubuntu-latest', needs: 'build-test', steps: [{ uses, with: { name, path: 'x', overwrite: true } }] };
   }]),
+  ['another job uploads with another letter case', 'late uploads an artifact', (wf) => {
+    wf.jobs.late = { 'runs-on': 'u', steps: [{ uses: steps(wf).at(-1).uses.replace('actions/upload-artifact', 'Actions/Upload-Artifact'), with: { name: 'x' } }] };
+  }],
+  ['a local reusable workflow', 'late uses a local action', (wf) => { wf.jobs.late = { uses: './.github/workflows/up.yml' }; }],
+  ['a local composite action', 'late uses a local action', (wf) => { wf.jobs.late = { 'runs-on': 'u', steps: [{ uses: './.github/actions/up' }] }; }],
   ['the merge sub-action instead of the upload', 'upload action', (wf) => {
     const step = steps(wf).at(-1);
     step.uses = step.uses.replace('actions/upload-artifact@', 'actions/upload-artifact/merge@');
