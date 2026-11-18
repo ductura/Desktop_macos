@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -143,6 +143,17 @@ for (const args of [[], ['--verify']]) {
   }));
 }
 
+test('writing into a .sha256 FIFO that has a reader exits 2', within((dir) => {
+  assert.equal(spawnSync('mkfifo', [sidecar(dir)]).status, 0);
+  const reader = openSync(sidecar(dir), constants.O_RDONLY | constants.O_NONBLOCK);
+  try {
+    const r = run(dir);
+    assert.equal(r.code, 2, r.out);
+  } finally {
+    closeSync(reader);
+  }
+}));
+
 test('writing does not follow a .sha256 symbolic link (exit 2, target unchanged)', within((dir) => {
   writeFileSync(join(dir, 'outside.txt'), 'keep');
   symlinkSync(join(dir, 'outside.txt'), sidecar(dir));
@@ -259,6 +270,10 @@ const MUTATIONS = [
   ['write may be skipped', 'write key if', (wf) => { steps(wf)[findRun(wf, WRITE)].if = 'false'; }],
   ['another functional script', 'functional: 0 steps', (wf) => {
     steps(wf).find((s) => s.run === './Tests/functional/install-and-launch.sh').run = './Tests/functional/other.sh';
+  }],
+  ['functional test || true', 'functional: 0 steps', (wf) => {
+    const step = steps(wf).find((s) => s.run === './Tests/functional/install-and-launch.sh');
+    step.run = `${step.run} || true`;
   }],
   ['no write step', 'write: 0 steps', (wf) => { steps(wf).splice(findRun(wf, WRITE), 1); }],
   ['setup-node on another SHA', 'setup-node pin', (wf) => { setupNode(wf).uses = `actions/setup-node@${'0'.repeat(40)}`; }],

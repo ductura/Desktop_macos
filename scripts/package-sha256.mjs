@@ -5,7 +5,7 @@
 // works in the unpacked artifact. Paths are relative to the working folder
 // (the repository root in CI). Every error other than a different hash exits 2.
 import { createHash } from 'node:crypto';
-import { constants, createReadStream, lstatSync, readFileSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, createReadStream, fstatSync, lstatSync, openSync, readFileSync, writeFileSync } from 'node:fs';
 
 const NAME = 'Ductura-macOS.dmg';
 const PACKAGE = `dist/${NAME}`;
@@ -44,9 +44,16 @@ function recordedHash() {
 async function main(args) {
   if (args.length === 0) {
     const sha = await packageHash();
-    // O_NOFOLLOW refuses a .sha256 that is a link; O_NONBLOCK a FIFO, which would wait.
+    // O_NOFOLLOW refuses a link and O_NONBLOCK keeps a FIFO from waiting; what
+    // was opened must then be a regular file (a FIFO with a reader opens fine).
     const { O_WRONLY, O_CREAT, O_TRUNC, O_NOFOLLOW, O_NONBLOCK } = constants;
-    writeFileSync(SIDECAR, `${sha}  ${NAME}\n`, { flag: O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_NONBLOCK });
+    const fd = openSync(SIDECAR, O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_NONBLOCK);
+    try {
+      if (!fstatSync(fd).isFile()) throw new Error(`${SIDECAR} is not a regular file`);
+      writeFileSync(fd, `${sha}  ${NAME}\n`);
+    } finally {
+      closeSync(fd);
+    }
     console.log(`${SIDECAR}: ${sha}`);
     return 0;
   }
