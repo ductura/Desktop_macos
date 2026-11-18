@@ -44,8 +44,9 @@ function recordedHash() {
 async function main(args) {
   if (args.length === 0) {
     const sha = await packageHash();
-    // O_NOFOLLOW: a .sha256 that is a link is refused, not written through.
-    writeFileSync(SIDECAR, `${sha}  ${NAME}\n`, { flag: constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW });
+    // O_NOFOLLOW refuses a .sha256 that is a link; O_NONBLOCK a FIFO, which would wait.
+    const { O_WRONLY, O_CREAT, O_TRUNC, O_NOFOLLOW, O_NONBLOCK } = constants;
+    writeFileSync(SIDECAR, `${sha}  ${NAME}\n`, { flag: O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_NONBLOCK });
     console.log(`${SIDECAR}: ${sha}`);
     return 0;
   }

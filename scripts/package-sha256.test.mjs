@@ -24,7 +24,7 @@ function folder(bytes = BYTES) {
   return dir;
 }
 const run = (dir, ...args) => {
-  const r = spawnSync(process.execPath, [SCRIPT, ...args], { cwd: dir, encoding: 'utf8' });
+  const r = spawnSync(process.execPath, [SCRIPT, ...args], { cwd: dir, encoding: 'utf8', timeout: 20_000 });
   return { code: r.status, out: r.stdout + r.stderr };
 };
 const sidecar = (dir) => join(dir, 'dist', `${NAME}.sha256`);
@@ -60,10 +60,10 @@ test('writes one shasum line with the known hash and --verify passes on the unto
   assert.equal(run(dir, '--verify').code, 0);
 }));
 
-test('writing again replaces an old .sha256', within((dir) => {
-  writeFileSync(sidecar(dir), `${'0'.repeat(64)}  ${NAME}\n`);
-  assert.equal(run(dir, '--verify').code, 1);
+test('writing again replaces a longer old .sha256 whole', within((dir) => {
+  writeFileSync(sidecar(dir), `${'0'.repeat(64)}  ${NAME}\r\n${'x'.repeat(100)}`);
   assert.equal(run(dir).code, 0);
+  assert.equal(readFileSync(sidecar(dir), 'utf8'), `${SHA}  ${NAME}\n`);
   assert.equal(run(dir, '--verify').code, 0);
 }));
 
@@ -133,6 +133,15 @@ test('--verify refuses a .sha256 that is a symbolic link to a good line (exit 2)
   symlinkSync(join(dir, 'good.sha256'), sidecar(dir));
   assert.equal(run(dir, '--verify').code, 2);
 }));
+
+for (const args of [[], ['--verify']]) {
+  test(`a .sha256 that is a FIFO exits 2 without waiting: ${args.join(' ') || 'write'}`, within((dir) => {
+    const made = spawnSync('mkfifo', [sidecar(dir)]);
+    assert.equal(made.status, 0, String(made.stderr));
+    const r = run(dir, ...args);
+    assert.equal(r.code, 2, r.out);
+  }));
+}
 
 test('writing does not follow a .sha256 symbolic link (exit 2, target unchanged)', within((dir) => {
   writeFileSync(join(dir, 'outside.txt'), 'keep');
@@ -216,6 +225,10 @@ function ciProblems(wf) {
   if (w.name !== 'Ductura-macOS') problems.push('artifact name');
   if (JSON.stringify(paths) !== JSON.stringify([`dist/${NAME}`, `dist/${NAME}.sha256`])) problems.push('artifact paths');
   if (w['if-no-files-found'] !== 'error') problems.push('if-no-files-found');
+  // Workflow or job env and defaults could change every run step at once.
+  for (const [where, o] of [['workflow', wf], ['build-test', wf?.jobs?.['build-test']]]) {
+    for (const k of ['env', 'defaults']) if (Object.hasOwn(o ?? {}, k)) problems.push(`${where} ${k}`);
+  }
   const tests = wf?.jobs?.['ci-ok-test']?.steps ?? [];
   if (!tests.some((s) => s?.run === 'node --test scripts/package-sha256.test.mjs')) problems.push('ci-ok-test');
   return problems;
@@ -248,6 +261,8 @@ const MUTATIONS = [
   ['setup-node on another SHA', 'setup-node pin', (wf) => { setupNode(wf).uses = `actions/setup-node@${'0'.repeat(40)}`; }],
   ['setup-node on Node 18', 'setup-node version', (wf) => { setupNode(wf).with['node-version'] = 18; }],
   ['setup-node may be skipped', 'setup-node key if', (wf) => { setupNode(wf).if = 'false'; }],
+  ['NODE_OPTIONS on the job', 'build-test env', (wf) => { wf.jobs['build-test'].env = { NODE_OPTIONS: '--import=x' }; }],
+  ['defaults on the workflow', 'workflow defaults', (wf) => { wf.defaults = { run: { shell: 'sh' } }; }],
   ['tests not run in ci-ok-test', 'ci-ok-test', (wf) => { wf.jobs['ci-ok-test'].steps = []; }],
 ];
 for (const [name, problem, mutate] of MUTATIONS) {
