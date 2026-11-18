@@ -5,58 +5,84 @@
 // works in the unpacked artifact. Paths are relative to the working folder
 // (the repository root in CI). Every error other than a different hash exits 2.
 import { createHash } from 'node:crypto';
-import { closeSync, constants, createReadStream, fstatSync, ftruncateSync, lstatSync, openSync, readFileSync, writeSync } from 'node:fs';
+import { closeSync, constants, createReadStream, fstatSync, ftruncateSync, openSync, readFileSync, writeSync } from 'node:fs';
 
 const NAME = 'Ductura-macOS.dmg';
 const PACKAGE = `dist/${NAME}`;
 const SIDECAR = `${PACKAGE}.sha256`;
 const LINE = /^([0-9a-f]{64}) {2}Ductura-macOS\.dmg\n$/;
 const LINE_BYTES = 64 + 2 + NAME.length + 1;
+const { O_RDONLY, O_WRONLY, O_CREAT, O_NOFOLLOW, O_NONBLOCK } = constants;
 
-// Size of a regular file; a missing path, folder or symbolic link is refused.
-function regularFileSize(path) {
-  let stat;
+// Opens a path once, never through a symbolic link (O_NOFOLLOW) and never
+// waiting on a FIFO (O_NONBLOCK). The descriptor must be a regular file and
+// `check` may refuse it; everything after goes through that descriptor, so
+// the path cannot be swapped between the check and the use. No O_TRUNC.
+function use(path, flags, check, work) {
+  let fd;
   try {
-    stat = lstatSync(path);
-  } catch {
-    throw new Error(`${path} is missing`);
+    fd = openSync(path, flags | O_NOFOLLOW | O_NONBLOCK);
+  } catch (error) {
+    throw new Error(`${path}: ${error.code === 'ENOENT' ? 'missing' : error.code ?? error.message}`);
   }
-  if (!stat.isFile()) throw new Error(`${path} is not a regular file`);
-  return stat.size;
+  const close = () => closeSync(fd);
+  try {
+    const stat = fstatSync(fd);
+    if (!stat.isFile()) throw new Error(`${path} is not a regular file`);
+    check(stat);
+  } catch (error) {
+    close();
+    throw error;
+  }
+  return work(fd, close);
 }
 
-async function packageHash() {
-  if (regularFileSize(PACKAGE) === 0) throw new Error(`${PACKAGE} is empty`);
-  const hash = createHash('sha256');
-  for await (const chunk of createReadStream(PACKAGE)) hash.update(chunk);
-  return hash.digest('hex');
+function packageHash() {
+  const refuseEmpty = (stat) => { if (stat.size === 0) throw new Error(`${PACKAGE} is empty`); };
+  return use(PACKAGE, O_RDONLY, refuseEmpty, async (fd) => {
+    const hash = createHash('sha256');
+    for await (const chunk of createReadStream(null, { fd, start: 0 })) hash.update(chunk);
+    return hash.digest('hex');
+  });
 }
 
 // The hash from the .sha256 file, which must be exactly `<hex>  <name>\n`.
 function recordedHash() {
-  if (regularFileSize(SIDECAR) !== LINE_BYTES) throw new Error(`${SIDECAR} is not one line of ${LINE_BYTES} bytes`);
-  // latin1 maps each byte to one character; LINE accepts only ASCII.
-  const match = LINE.exec(readFileSync(SIDECAR, 'latin1'));
-  if (!match) throw new Error(`${SIDECAR} is not "<64 lowercase hex>  ${NAME}"`);
-  return match[1];
+  const oneLine = (stat) => {
+    if (stat.size !== LINE_BYTES) throw new Error(`${SIDECAR} is not one line of ${LINE_BYTES} bytes`);
+  };
+  return use(SIDECAR, O_RDONLY, oneLine, (fd, close) => {
+    let text;
+    try {
+      // latin1 maps each byte to one character; LINE accepts only ASCII.
+      text = readFileSync(fd, 'latin1');
+    } finally {
+      close();
+    }
+    const match = LINE.exec(text);
+    if (!match) throw new Error(`${SIDECAR} is not "<64 lowercase hex>  ${NAME}"`);
+    return match[1];
+  });
+}
+
+// Empties and writes the .sha256 only when it has no other name: a hard link
+// could be the package or any other file.
+function writeHash(sha) {
+  const oneName = (stat) => { if (stat.nlink !== 1) throw new Error(`${SIDECAR} has another name`); };
+  use(SIDECAR, O_WRONLY | O_CREAT, oneName, (fd, close) => {
+    try {
+      ftruncateSync(fd, 0);
+      if (writeSync(fd, `${sha}  ${NAME}\n`, 0) !== LINE_BYTES) throw new Error(`${SIDECAR}: short write`);
+    } finally {
+      close();
+    }
+  });
 }
 
 async function main(args) {
   if (args.length === 0) {
     const sha = await packageHash();
-    // O_NOFOLLOW refuses a link and O_NONBLOCK keeps a FIFO from waiting. No
-    // O_TRUNC: only after fstat shows a regular file with no other name (a
-    // hard link could be the package) is it emptied and written from 0.
-    const { O_WRONLY, O_CREAT, O_NOFOLLOW, O_NONBLOCK } = constants;
-    const fd = openSync(SIDECAR, O_WRONLY | O_CREAT | O_NOFOLLOW | O_NONBLOCK);
-    try {
-      const stat = fstatSync(fd);
-      if (!stat.isFile() || stat.nlink !== 1) throw new Error(`${SIDECAR} is not a regular file with one name`);
-      ftruncateSync(fd, 0);
-      writeSync(fd, `${sha}  ${NAME}\n`, 0);
-    } finally {
-      closeSync(fd);
-    }
+    writeHash(sha);
     console.log(`${SIDECAR}: ${sha}`);
     return 0;
   }

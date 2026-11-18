@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { closeSync, constants, linkSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, existsSync, linkSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -134,26 +134,28 @@ test('--verify refuses a .sha256 that is a symbolic link to a good line (exit 2)
   assert.equal(run(dir, '--verify').code, 2);
 }));
 
-for (const args of [[], ['--verify']]) {
-  test(`a .sha256 that is a FIFO exits 2 without waiting: ${args.join(' ') || 'write'}`, within((dir) => {
-    const made = spawnSync('mkfifo', [sidecar(dir)]);
-    assert.equal(made.status, 0, String(made.stderr));
-    const r = run(dir, ...args);
-    assert.equal(r.code, 2, r.out);
-  }));
-}
-
-for (const args of [[], ['--verify']]) {
-  test(`a .sha256 FIFO that has a reader exits 2 without waiting: ${args.join(' ') || 'write'}`, within((dir) => {
-    assert.equal(spawnSync('mkfifo', [sidecar(dir)]).status, 0);
-    const reader = openSync(sidecar(dir), constants.O_RDONLY | constants.O_NONBLOCK);
-    try {
-      const r = run(dir, ...args);
-      assert.equal(r.code, 2, r.out);
-    } finally {
-      closeSync(reader);
+// A FIFO in place of either file, with no other end, with a reader or with a
+// writer that the test holds open: exit 2 in both modes, never a wait (the
+// process has a 20 s limit). The script is the package's reader itself.
+const FIFO_PEERS = [['no other end', null], ['a reader', constants.O_RDONLY | constants.O_NONBLOCK], ['a writer', constants.O_RDWR]];
+for (const [what, at] of [['.sha256', sidecar], ['package', (dir) => join(dir, 'dist', NAME)]]) {
+  for (const [peer, flags] of FIFO_PEERS) {
+    if (what === 'package' && peer === 'a reader') continue;
+    for (const args of [[], ['--verify']]) {
+      test(`a ${what} FIFO with ${peer} exits 2 without waiting: ${args.join(' ') || 'write'}`, within((dir) => {
+        if (what === 'package') writeFileSync(sidecar(dir), `${SHA}  ${NAME}\n`);
+        rmSync(at(dir), { force: true });
+        assert.equal(spawnSync('mkfifo', [at(dir)]).status, 0);
+        const held = flags === null ? null : openSync(at(dir), flags);
+        try {
+          const r = run(dir, ...args);
+          assert.equal(r.code, 2, r.out);
+        } finally {
+          if (held !== null) closeSync(held);
+        }
+      }));
     }
-  }));
+  }
 }
 
 // A .sha256 that is a second name of another file: writing would change that file.
@@ -163,12 +165,29 @@ test('writing into a .sha256 hard-linked to the package exits 2 and leaves the p
   assert.deepEqual(readFileSync(join(dir, 'dist', NAME)), BYTES);
 }));
 
-test('writing into a .sha256 hard-linked to another file exits 2 and leaves that file as it was', within((dir) => {
+test('writing into a .sha256 with two other names exits 2 and leaves that file as it was', within((dir) => {
   const other = join(dir, 'other.txt');
   writeFileSync(other, `${'0'.repeat(64)}  ${NAME}\r\nkeep`);
   linkSync(other, sidecar(dir));
+  linkSync(other, join(dir, 'third.txt'));
   assert.equal(run(dir).code, 2);
   assert.equal(readFileSync(other, 'utf8'), `${'0'.repeat(64)}  ${NAME}\r\nkeep`);
+}));
+
+test('writing succeeds once the other name of a .sha256 is gone', within((dir) => {
+  const other = join(dir, 'other.txt');
+  writeFileSync(other, `${'0'.repeat(64)}  ${NAME}\r\nkeep`);
+  linkSync(other, sidecar(dir));
+  unlinkSync(other);
+  assert.equal(run(dir).code, 0);
+  assert.equal(readFileSync(sidecar(dir), 'utf8'), `${SHA}  ${NAME}\n`);
+}));
+
+test('writing does not create the target of a dangling .sha256 link (exit 2)', within((dir) => {
+  const nowhere = join(dir, 'nowhere.txt');
+  symlinkSync(nowhere, sidecar(dir));
+  assert.equal(run(dir).code, 2);
+  assert.equal(existsSync(nowhere), false);
 }));
 
 test('writing does not follow a .sha256 symbolic link (exit 2, target unchanged)', within((dir) => {
@@ -233,6 +252,8 @@ function ciProblems(wf) {
   const build = at((s) => s?.run === './scripts/build-dmg.sh', 'build');
   const write = at((s) => s?.run === WRITE, 'write');
   const functional = at((s) => s?.run === './Tests/functional/install-and-launch.sh', 'functional');
+  const hashSteps = steps.filter((s) => String(s?.run ?? '').includes('package-sha256')).length;
+  if (hashSteps !== 2) problems.push(`hash steps: ${hashSteps}`);
   const verify = at((s) => s?.run === VERIFY, 'verify');
   const upload = at((s) => /^actions\/upload-artifact@/.test(s?.uses ?? ''), 'upload');
   if (!(node < build && write === build + 1 && functional > write && verify > functional && upload === verify + 1)) {
@@ -240,7 +261,12 @@ function ciProblems(wf) {
   }
   // Only these keys, so no if, continue-on-error, shell, env or working-directory.
   const keys = [[node, 'setup-node', ['uses', 'with']], [write, 'write', ['name', 'run']],
-    [verify, 'verify', ['name', 'run']], [upload, 'upload', ['uses', 'with']]];
+    [functional, 'functional', ['name', 'run']], [verify, 'verify', ['name', 'run']], [upload, 'upload', ['uses', 'with']]];
+  for (const job of ['build-test', 'ci-ok-test']) {
+    for (const k of Object.keys(wf?.jobs?.[job] ?? {})) {
+      if (!['runs-on', 'timeout-minutes', 'permissions', 'steps'].includes(k)) problems.push(`${job} job key ${k}`);
+    }
+  }
   for (const [i, what, allowed] of keys) {
     for (const k of Object.keys(steps[i] ?? {})) if (!allowed.includes(k)) problems.push(`${what} key ${k}`);
   }
@@ -299,6 +325,16 @@ const MUTATIONS = [
   ['setup-node on Node 18', 'setup-node version', (wf) => { setupNode(wf).with['node-version'] = 18; }],
   ['setup-node may be skipped', 'setup-node key if', (wf) => { setupNode(wf).if = 'false'; }],
   ['NODE_OPTIONS on the job', 'build-test env', (wf) => { wf.jobs['build-test'].env = { NODE_OPTIONS: '--import=x' }; }],
+  ['env on ci-ok-test', 'ci-ok-test job key env', (wf) => { wf.jobs['ci-ok-test'].env = { NODE_OPTIONS: '--import=x' }; }],
+  ['defaults on ci-ok-test', 'ci-ok-test job key defaults', (wf) => { wf.jobs['ci-ok-test'].defaults = { run: { shell: 'true {0}' } }; }],
+  ...['build-test', 'ci-ok-test'].flatMap((job) => ['continue-on-error', 'if'].map((k) => [
+    `${k} on the ${job} job`, `${job} job key ${k}`, (wf) => { wf.jobs[job][k] = k === 'if' ? 'false' : true; }])),
+  ['a second write after the functional test', 'hash steps: 3', (wf) => {
+    steps(wf).splice(findRun(wf, VERIFY), 0, { run: 'node  scripts/package-sha256.mjs' });
+  }],
+  ['functional test with continue-on-error', 'functional key continue-on-error', (wf) => {
+    steps(wf).find((s) => s.run === './Tests/functional/install-and-launch.sh')['continue-on-error'] = true;
+  }],
   ['defaults on the workflow', 'workflow defaults', (wf) => { wf.defaults = { run: { shell: 'sh' } }; }],
   ['tests not run in ci-ok-test', 'ci-ok-test', (wf) => { wf.jobs['ci-ok-test'].steps = []; }],
   ...['if', 'continue-on-error', 'shell'].map((k) => [`ci-ok-test step with ${k}`, `ci-ok-test key ${k}`, (wf) => {
