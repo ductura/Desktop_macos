@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { closeSync, constants, existsSync, linkSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, existsSync, linkSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -28,6 +28,13 @@ const run = (dir, ...args) => {
   return { code: r.status, out: r.stdout + r.stderr };
 };
 const sidecar = (dir) => join(dir, 'dist', `${NAME}.sha256`);
+// Buffer.equals, not deepEqual: a failing deepEqual on 1 MB builds a huge diff.
+const unchanged = (path) => assert.ok(readFileSync(path).equals(BYTES), `${path} changed`);
+// Writing leaves only the package and its .sha256: no other file anywhere.
+const onlyPair = (dir) => {
+  assert.deepEqual(readdirSync(dir), ['dist']);
+  assert.deepEqual(readdirSync(join(dir, 'dist')).sort(), [NAME, `${NAME}.sha256`]);
+};
 function within(fn) {
   return () => { const dir = folder(); try { fn(dir); } finally { rmSync(dir, { recursive: true, force: true }); } };
 }
@@ -57,14 +64,18 @@ test('writes one shasum line with the known hash and --verify passes on the unto
   const r = run(dir);
   assert.equal(r.code, 0, r.out);
   assert.equal(readFileSync(sidecar(dir), 'utf8'), `${SHA}  ${NAME}\n`);
+  onlyPair(dir);
   assert.equal(run(dir, '--verify').code, 0);
+  onlyPair(dir);
 }));
 
 test('writing again replaces a longer old .sha256 whole', within((dir) => {
   writeFileSync(sidecar(dir), `${'0'.repeat(64)}  ${NAME}\r\n${'x'.repeat(100)}`);
   assert.equal(run(dir).code, 0);
   assert.equal(readFileSync(sidecar(dir), 'utf8'), `${SHA}  ${NAME}\n`);
+  onlyPair(dir);
   assert.equal(run(dir, '--verify').code, 0);
+  onlyPair(dir);
 }));
 
 // Every line that is not exactly `<64 lowercase hex>  Ductura-macOS.dmg\n`.
@@ -150,6 +161,10 @@ for (const [what, at] of [['.sha256', sidecar], ['package', (dir) => join(dir, '
         try {
           const r = run(dir, ...args);
           assert.equal(r.code, 2, r.out);
+          // Only a .sha256 FIFO with no reader fails to open for writing; every
+          // other one opens and is then refused as not a regular file.
+          const noReader = what === '.sha256' && flags === null && args.length === 0;
+          assert.match(r.out, noReader ? /ENXIO/ : /is not a regular file/);
         } finally {
           if (held !== null) closeSync(held);
         }
@@ -162,7 +177,7 @@ for (const [what, at] of [['.sha256', sidecar], ['package', (dir) => join(dir, '
 test('writing into a .sha256 hard-linked to the package exits 2 and leaves the package as it was', within((dir) => {
   linkSync(join(dir, 'dist', NAME), sidecar(dir));
   assert.equal(run(dir).code, 2);
-  assert.deepEqual(readFileSync(join(dir, 'dist', NAME)), BYTES);
+  unchanged(join(dir, 'dist', NAME));
 }));
 
 test('writing into a .sha256 with two other names exits 2 and leaves that file as it was', within((dir) => {
@@ -195,7 +210,7 @@ test('writing does not follow a .sha256 symbolic link (exit 2, target unchanged)
   symlinkSync(join(dir, 'outside.txt'), sidecar(dir));
   assert.equal(run(dir).code, 2);
   assert.equal(readFileSync(join(dir, 'outside.txt'), 'utf8'), 'keep');
-  assert.deepEqual(readFileSync(join(dir, 'dist', NAME)), BYTES);
+  unchanged(join(dir, 'dist', NAME));
 }));
 
 test('--verify without a .sha256 file exits 2', within((dir) => {
@@ -219,8 +234,9 @@ for (const args of [[], ['--verify']]) {
     }]) {
       const dir = make();
       try {
-        writeFileSync(sidecar(dir), `${SHA}  ${NAME}\n`);
+        writeFileSync(sidecar(dir), `${'0'.repeat(64)}  ${NAME}\n`);
         assert.equal(run(dir, ...args).code, 2);
+        assert.equal(readFileSync(sidecar(dir), 'utf8'), `${'0'.repeat(64)}  ${NAME}\n`);
       } finally { rmSync(dir, { recursive: true, force: true }); }
     }
   });
@@ -256,6 +272,13 @@ function ciProblems(wf) {
   if (hashSteps !== 2) problems.push(`hash steps: ${hashSteps}`);
   const verify = at((s) => s?.run === VERIFY, 'verify');
   const upload = at((s) => /^actions\/upload-artifact@/.test(s?.uses ?? ''), 'upload');
+  // No other job may upload an artifact of the same name over the pair.
+  for (const [job, j] of Object.entries(wf?.jobs ?? {})) {
+    if (job === 'build-test') continue;
+    for (const s of j?.steps ?? []) {
+      if (/^actions\/upload-artifact@/.test(s?.uses ?? '') && s?.with?.name === 'Ductura-macOS') problems.push(`${job} uploads Ductura-macOS`);
+    }
+  }
   if (!(node < build && write === build + 1 && functional > write && verify > functional && upload === verify + 1)) {
     problems.push('order');
   }
@@ -325,6 +348,10 @@ const MUTATIONS = [
   ['setup-node on Node 18', 'setup-node version', (wf) => { setupNode(wf).with['node-version'] = 18; }],
   ['setup-node may be skipped', 'setup-node key if', (wf) => { setupNode(wf).if = 'false'; }],
   ['NODE_OPTIONS on the job', 'build-test env', (wf) => { wf.jobs['build-test'].env = { NODE_OPTIONS: '--import=x' }; }],
+  ['another job uploads Ductura-macOS', 'late uploads Ductura-macOS', (wf) => {
+    wf.jobs.late = { 'runs-on': 'ubuntu-latest', needs: 'build-test', steps: [
+      { uses: steps(wf).at(-1).uses, with: { name: 'Ductura-macOS', path: 'x', overwrite: true } }] };
+  }],
   ['env on ci-ok-test', 'ci-ok-test job key env', (wf) => { wf.jobs['ci-ok-test'].env = { NODE_OPTIONS: '--import=x' }; }],
   ['defaults on ci-ok-test', 'ci-ok-test job key defaults', (wf) => { wf.jobs['ci-ok-test'].defaults = { run: { shell: 'true {0}' } }; }],
   ...['build-test', 'ci-ok-test'].flatMap((job) => ['continue-on-error', 'if'].map((k) => [
