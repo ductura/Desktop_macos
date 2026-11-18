@@ -19,11 +19,12 @@ const { O_RDONLY, O_NOFOLLOW, O_NONBLOCK } = constants;
 // and never waiting on a FIFO (O_NONBLOCK). The descriptor must be a regular
 // file and `check` may refuse its size. `read` reads only through that
 // descriptor, at most one byte past the checked size, and returns the bytes it
-// took; then a second fstat of the same descriptor must show the same size,
-// mtime and ctime to the nanosecond (bigint: a double loses nanoseconds),
-// inode and device, and the bytes taken must be that size, so a file changed
-// while it was read is refused.
-function use(path, check, read) {
+// took. Then a second fstat of the same descriptor, always taken, must show
+// the same size, mtime and ctime to the nanosecond (bigint: a double loses
+// nanoseconds), inode and device, and the bytes taken must be that size, so a
+// file changed while it was read is refused. `settle` judges the bytes after
+// that second fstat (an emptied package is "empty", which wins over "changed").
+function use(path, check, read, settle = () => {}) {
   let fd;
   try {
     fd = openSync(path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
@@ -37,6 +38,7 @@ function use(path, check, read) {
     check(size);
     const bytes = read(fd, size + 1);
     const after = fstatSync(fd, { bigint: true });
+    settle(bytes);
     if (bytes !== size || ['size', 'mtimeNs', 'ctimeNs', 'ino', 'dev'].some((key) => after[key] !== before[key])) {
       throw new Error(`${path} changed while being read`);
     }
@@ -58,11 +60,8 @@ function readAll(fd, limit, take) {
 function packageHash() {
   const refuseEmpty = (size) => { if (size === 0) throw new Error(`${PACKAGE} is empty`); };
   const hash = createHash('sha256');
-  use(PACKAGE, refuseEmpty, (fd, limit) => {
-    const bytes = readAll(fd, limit, (chunk) => hash.update(chunk));
-    refuseEmpty(bytes); // emptied after the check: "empty", not the hash of no bytes
-    return bytes;
-  });
+  // Emptied after the check: "empty", not the hash of no bytes.
+  use(PACKAGE, refuseEmpty, (fd, limit) => readAll(fd, limit, (chunk) => hash.update(chunk)), refuseEmpty);
   return hash.digest('hex');
 }
 

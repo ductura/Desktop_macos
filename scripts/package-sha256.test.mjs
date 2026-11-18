@@ -129,6 +129,7 @@ const phasePreload = (dir, path, phase, action) => {
   writeFileSync(preload, `import fs from 'node:fs';\nimport { syncBuiltinESMExports } from 'node:module';\n`
     + `const path = ${JSON.stringify(path)}, phase = ${JSON.stringify(phase)}, f = fs.fstatSync, rs = fs.readSync;\n`
     + `const { ino, size } = fs.lstatSync(path); let stats = 0, reads = 0, total = 0, done = false;\n`
+    + `process.on('exit', () => fs.writeFileSync(${JSON.stringify(join(dir, 'fstats.txt'))}, String(stats)));\n`
     + `const fire = () => { if (!done) { done = true; globalThis.testAction = true; try { ${action} } finally { globalThis.testAction = false; } } };\n`
     + `fs.fstatSync = (fd, ...a) => { const s = f(fd, ...a); if (f(fd).ino === ino && ++stats === 1 && phase === 'check') fire(); return s; };\n`
     + `fs.readSync = (fd, ...a) => { const n = rs(fd, ...a); if (f(fd).ino === ino) { reads++; total += n;\n`
@@ -141,8 +142,8 @@ const countPreload = (dir) => {
   writeFileSync(log, '');
   writeFileSync(preload, `import fs from 'node:fs';\nimport { basename, dirname, resolve } from 'node:path';\nimport { fileURLToPath } from 'node:url';\nimport { syncBuiltinESMExports } from 'node:module';\n`
     + `const append = fs.appendFileSync, lstat = fs.lstatSync, log = ${JSON.stringify(log)};\n`
-    + `const stat = fs.statSync, ids = (p) => [lstat, stat].map((f) => { try { const s = f(p, { throwIfNoEntry: false }); return s && s.dev + ':' + s.ino; } catch { return undefined; } });\n`
-    + `const where = (p) => { try { return 'missing:' + resolve(fs.realpathSync(dirname(resolve(String(p)))), basename(String(p))); } catch { return 'missing:' + resolve(String(p)); } };\n`
+    + `const stat = fs.statSync, real = fs.realpathSync, ids = (p) => [lstat, stat].map((f) => { try { const s = f(p, { throwIfNoEntry: false }); return s && s.dev + ':' + s.ino; } catch { return undefined; } });\n`
+    + `const where = (p) => { try { return 'missing:' + resolve(real(dirname(resolve(String(p)))), basename(String(p))); } catch { return 'missing:' + resolve(String(p)); } };\n`
     + `const files = {}; for (const [p, name] of [[${JSON.stringify(pkg(dir))}, 'package'], [${JSON.stringify(sidecar(dir))}, 'sha256']]) {\n`
     + `  const [id] = ids(p); files[id || where(p)] = name; }\n`
     + `const named = (x) => { try { const p = ArrayBuffer.isView(x) ? Buffer.from(x.buffer, x.byteOffset, x.byteLength)\n`
@@ -164,6 +165,9 @@ const phased = (dir, path, phase, action) => {
   const ctime = statSync(path, { bigint: true }).ctimeNs;
   const r = run(dir, ['--verify'], ['--import', href, '--import', count.href]);
   assert.deepEqual(count.calls(), path === pkg(dir) ? ['package openSync', 'sha256 openSync'] : ['sha256 openSync']);
+  // Whatever the change, the script checks the target twice on the same
+  // descriptor: before reading and after (review c.6972810329).
+  assert.equal(readFileSync(join(dir, 'fstats.txt'), 'utf8'), '2', 'fstat calls on the target');
   // Precondition: the clock moved ctime, so a row cannot pass on a change the
   // file system did not record.
   assert.notEqual(statSync(path, { bigint: true }).ctimeNs, ctime, 'ctime moved');
