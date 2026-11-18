@@ -349,6 +349,9 @@ function ciProblems(wf) {
   // Any upload-artifact action (also /merge), in build-test exactly once.
   const uploads = (s) => /^actions\/upload-artifact[/@]/.test(s?.uses ?? '');
   const upload = at(uploads, 'upload');
+  // ... and that one is the plain action on a full SHA, not a sub-action such
+  // as /merge, which takes no paths and would upload no pair.
+  if (!/^actions\/upload-artifact@[0-9a-f]{40}$/.test(steps[upload]?.uses ?? '')) problems.push('upload action');
   // No other job uploads at all, so none can replace the pair, whatever the
   // spelling of the name (trailing space, expression).
   for (const [job, j] of Object.entries(wf?.jobs ?? {})) {
@@ -429,6 +432,10 @@ const MUTATIONS = [
   ].map(([what, uses, name]) => [`another job uploads with ${what}`, 'late uploads an artifact', (wf) => {
     wf.jobs.late = { 'runs-on': 'ubuntu-latest', needs: 'build-test', steps: [{ uses, with: { name, path: 'x', overwrite: true } }] };
   }]),
+  ['the merge sub-action instead of the upload', 'upload action', (wf) => {
+    const step = steps(wf).at(-1);
+    step.uses = step.uses.replace('actions/upload-artifact@', 'actions/upload-artifact/merge@');
+  }],
   ['a second upload in build-test', 'upload: 2 steps', (wf) => {
     steps(wf).push({ uses: `actions/upload-artifact/merge@${'0'.repeat(40)}`, with: { name: 'Ductura-macOS' } });
   }],
