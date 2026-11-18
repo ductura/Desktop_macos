@@ -122,6 +122,18 @@ test('--verify refuses a .sha256 that grows after the size check (exit 2)', with
   assert.equal(readFileSync(sidecar(dir), 'utf8'), GOOD + GOOD, 'the file grew');
 }));
 
+// The package hash comes from reading the checked descriptor after the check:
+// a byte changed in place right after fstat (same inode) is seen, so a hash
+// taken from any read of the path before the checked open (fs/promises, a
+// string read) misses it and exits 0.
+test('--verify hashes what the checked package holds after the check (exit 1)', within((dir) => {
+  const r = preloaded(dir, pkg(dir), 'fstatSync',
+    "const w = fs.openSync(path, 'r+'); fs.writeSync(w, Buffer.of(0x60), 0, 1, 500000); fs.closeSync(w);");
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /differs/);
+  assert.ok(readFileSync(pkg(dir)).equals(flipped()), 'the byte changed');
+}));
+
 // Every .sha256 that is not exactly `<64 lowercase hex>  Ductura-macOS.dmg\n`.
 const BAD_LINES = [
   ['CRLF', `${SHA}  ${NAME}\r\n`], ['no final LF', `${SHA}  ${NAME}`], ['two lines', GOOD + GOOD],
@@ -134,7 +146,9 @@ const BAD_LINES = [
   ['empty line after the line', `${GOOD}\n`], ['longer than 84 bytes', GOOD + ' '.repeat(1000)],
   // Exactly 84 bytes, so these pass the size check and reach the line pattern.
   ['non-hex letter', `${SHA.slice(0, 63)}g  ${NAME}\n`], ['uppercase hex', `${SHA.toUpperCase()}  ${NAME}\n`],
-  ['binary mode marker', `${SHA} *${NAME}\n`], ['two tabs', `${SHA}\t\t${NAME}\n`],
+  ['binary mode marker', `${SHA} *${NAME}\n`], ['other extension', `${SHA}  Ductura-macOS.zip\n`],
+  ['other letter in the name', `${SHA}  Ductura-macOX.dmg\n`], ['lowercase name', `${SHA}  ductura-macOS.dmg\n`],
+  ['other character for the dot', `${SHA}  Ductura-macOS-dmg\n`], ['underscore for the hyphen', `${SHA}  Ductura_macOS.dmg\n`], ['two tabs', `${SHA}\t\t${NAME}\n`],
   ['tab and space', `${SHA}\t ${NAME}\n`], ['space and tab', `${SHA} \t${NAME}\n`], ['one NBSP', `${SHA}\u00a0${NAME}\n`],
   ['two LF as separator', `${SHA}\n\n${NAME}\n`], ['CR instead of LF', `${SHA}  ${NAME}\r`],
   ['DEL instead of LF', `${SHA}  ${NAME}\u007f`], ['NUL instead of LF', `${SHA}  ${NAME}\0`], ['space instead of LF', `${SHA}  ${NAME} `],
@@ -205,7 +219,8 @@ for (const args of [[], ['--Verify'], ['--verify', 'extra'], ['--verify', '--ver
 // running them, with only a name and the command; the workflow, the job and its
 // steps carry no keys that could skip, soften or reconfigure them (env,
 // defaults, if, continue-on-error, shell), and no step writes GITHUB_ENV or
-// GITHUB_PATH or sets NODE_OPTIONS. Each change to a copy must be caught.
+// GITHUB_PATH or sets NODE_OPTIONS (by literal text: an obfuscated name such
+// as "NODE_""OPTIONS" is left to review). Each change to a copy must be caught.
 const WORKFLOW = parse(readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8'));
 const extra = (keys, allowed) => Object.keys(keys ?? {}).filter((k) => !allowed.includes(k));
 function ciProblems(wf) {
