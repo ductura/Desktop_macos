@@ -204,7 +204,7 @@ function ciProblems(wf) {
   const node = at((s) => /^actions\/setup-node@/.test(s?.uses ?? ''), 'setup-node');
   const build = at((s) => s?.run === './scripts/build-dmg.sh', 'build');
   const write = at((s) => s?.run === WRITE, 'write');
-  const functional = at((s) => String(s?.run ?? '').startsWith('./Tests/functional/'), 'functional');
+  const functional = at((s) => s?.run === './Tests/functional/install-and-launch.sh', 'functional');
   const verify = at((s) => s?.run === VERIFY, 'verify');
   const upload = at((s) => /^actions\/upload-artifact@/.test(s?.uses ?? ''), 'upload');
   if (!(node < build && write === build + 1 && functional > write && verify > functional && upload === verify + 1)) {
@@ -257,6 +257,9 @@ const MUTATIONS = [
   ['--verify may be skipped', 'verify key continue-on-error', (wf) => { steps(wf)[findRun(wf, VERIFY)]['continue-on-error'] = true; }],
   ['--verify run by a shell that ignores it', 'verify key shell', (wf) => { steps(wf)[findRun(wf, VERIFY)].shell = 'sh -c "true" {0}'; }],
   ['write may be skipped', 'write key if', (wf) => { steps(wf)[findRun(wf, WRITE)].if = 'false'; }],
+  ['another functional script', 'functional: 0 steps', (wf) => {
+    steps(wf).find((s) => s.run === './Tests/functional/install-and-launch.sh').run = './Tests/functional/other.sh';
+  }],
   ['no write step', 'write: 0 steps', (wf) => { steps(wf).splice(findRun(wf, WRITE), 1); }],
   ['setup-node on another SHA', 'setup-node pin', (wf) => { setupNode(wf).uses = `actions/setup-node@${'0'.repeat(40)}`; }],
   ['setup-node on Node 18', 'setup-node version', (wf) => { setupNode(wf).with['node-version'] = 18; }],
