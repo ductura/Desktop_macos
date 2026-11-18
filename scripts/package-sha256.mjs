@@ -27,23 +27,32 @@ function use(path, check, work) {
     throw new Error(`${path}: ${error.code === 'ENOENT' ? 'missing' : error.code ?? error.message}`);
   }
   const close = () => closeSync(fd);
+  let stat;
   try {
-    const stat = fstatSync(fd);
+    stat = fstatSync(fd);
     if (!stat.isFile()) throw new Error(`${path} is not a regular file`);
     check(stat);
   } catch (error) {
     close();
     throw error;
   }
-  return work(fd, close);
+  return work(fd, close, stat);
 }
 
 function packageHash() {
   const refuseEmpty = (stat) => { if (stat.size === 0) throw new Error(`${PACKAGE} is empty`); };
-  return use(PACKAGE, refuseEmpty, async (fd) => {
+  return use(PACKAGE, refuseEmpty, async (fd, close, stat) => {
     const hash = createHash('sha256');
+    let bytes = 0;
     // The stream closes the descriptor when it ends or fails.
-    for await (const chunk of createReadStream(null, { fd, start: 0 })) hash.update(chunk);
+    for await (const chunk of createReadStream(null, { fd, start: 0 })) {
+      bytes += chunk.length;
+      hash.update(chunk);
+    }
+    // A package that changed size after the check is not usable, whatever it
+    // now hashes to: emptied (the hash of no bytes) or cut or grown.
+    if (bytes === 0) refuseEmpty({ size: 0 });
+    if (bytes !== stat.size) throw new Error(`${PACKAGE} changed size while being read`);
     return hash.digest('hex');
   });
 }

@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { closeSync, constants, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -132,6 +132,45 @@ test('--verify hashes what the checked package holds after the check (exit 1)', 
   assert.equal(r.code, 1, r.out);
   assert.match(r.out, /differs/);
   assert.ok(readFileSync(pkg(dir)).equals(flipped()), 'the byte changed');
+}));
+
+// Review c.6970912826 (#19), N1: a file that changes size between the check
+// and the read is not usable (2), whatever its new content hashes to. The
+// empty-content hash is written here (SHA-256 of zero bytes), so a package
+// emptied after the check cannot match its .sha256 and exit 0.
+const EMPTY_LINE = `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  ${NAME}\n`;
+const RESIZED = [
+  ['the package emptied', pkg, EMPTY_LINE, 'fs.truncateSync(path, 0);', /is empty/, 0],
+  ['the package cut in half', pkg, GOOD, 'fs.truncateSync(path, 500000);', /changed size while being read/, 500_000],
+  ['the package one byte longer', pkg, GOOD, "fs.appendFileSync(path, 'a');", /changed size while being read/, 1_000_001],
+  ['the .sha256 emptied', sidecar, GOOD, 'fs.truncateSync(path, 0);', PATTERN, 0],
+];
+for (const [what, at, line, action, message, size] of RESIZED) {
+  test(`--verify exits 2 with ${what} after the check`, within((dir) => {
+    const r = preloaded(dir, at(dir), 'fstatSync', action);
+    assert.equal(r.code, 2, r.out);
+    assert.match(r.out, message);
+    assert.equal(statSync(at(dir)).size, size, 'the size changed');
+  }, BYTES, line));
+}
+
+// N2: each file is reached exactly once, by one openSync. A preload wraps every
+// public function of node:fs and node:fs/promises (constructors aside) and logs
+// each call that names the package or the .sha256 by path (string, URL or
+// Buffer). Calls that bypass the public fs module are left to review.
+test('--verify reaches each file by path exactly once, with openSync', within((dir) => {
+  const preload = join(dir, 'count.mjs'), log = join(dir, 'calls.log');
+  writeFileSync(preload, `import fs from 'node:fs';\nimport { resolve } from 'node:path';\nimport { fileURLToPath } from 'node:url';\n`
+    + `import { syncBuiltinESMExports } from 'node:module';\nconst append = fs.appendFileSync, log = ${JSON.stringify(log)};\n`
+    + `const files = { [resolve(${JSON.stringify(pkg(dir))})]: 'package', [resolve(${JSON.stringify(sidecar(dir))})]: 'sha256' };\n`
+    + `const named = (a) => { try { return files[resolve(a instanceof URL ? fileURLToPath(a) : String(a))]; } catch { return undefined; } };\n`
+    + `for (const [where, mod] of [['', fs], ['promises.', fs.promises]]) for (const k of Object.keys(mod)) {\n`
+    + `  const f = mod[k]; if (typeof f !== 'function' || /^[A-Z]/.test(k)) continue;\n`
+    + `  mod[k] = function (...a) { for (const x of a) { const n = (typeof x === 'string' || x instanceof URL || Buffer.isBuffer(x)) && named(x);\n`
+    + `    if (n) append(log, n + ' ' + where + k + '\\n'); } return f.apply(this, a); }; }\nsyncBuiltinESMExports();\n`);
+  const r = run(dir, ['--verify'], ['--import', pathToFileURL(preload).href]);
+  assert.equal(r.code, 0, r.out);
+  assert.deepEqual(readFileSync(log, 'utf8').trim().split('\n').sort(), ['package openSync', 'sha256 openSync']);
 }));
 
 // Every .sha256 that is not exactly `<64 lowercase hex>  Ductura-macOS.dmg\n`.
