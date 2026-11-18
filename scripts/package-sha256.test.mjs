@@ -62,15 +62,17 @@ test('--verify exits 0 on the untouched package', within((dir) => {
   assert.match(r.out, /matches/);
 }));
 
-// The whole hash is compared: a recorded hash one hex digit off fails.
-for (const [where, line] of [['first', `0${GOOD.slice(1)}`], ['last', `${SHA.slice(0, 63)}1  ${NAME}\n`]]) {
-  test(`--verify exits 1 when the ${where} hex digit of the recorded hash differs`, within((dir) => {
-    assert.notEqual(line, GOOD);
+// The whole hash is compared: a recorded hash off in any one of its 64 hex
+// digits fails, so comparing only some digits (the ends, a prefix) fails here.
+test('--verify exits 1 when any one hex digit of the recorded hash differs', within((dir) => {
+  for (let at = 0; at < 64; at++) {
+    const line = `${SHA.slice(0, at)}${SHA[at] === '0' ? '1' : '0'}${SHA.slice(at + 1)}  ${NAME}\n`;
+    writeFileSync(sidecar(dir), line);
     const r = run(dir);
-    assert.equal(r.code, 1, r.out);
+    assert.equal(r.code, 1, `digit ${at}: ${r.out}`);
     assert.match(r.out, /differs/);
-  }, BYTES, line));
-}
+  }
+}));
 
 // Rows of another length stop at the size check, rows of 84 bytes at the line
 // pattern; each asserts its own message, so neither check stands in for the other.
@@ -208,7 +210,8 @@ for (const [what, phase, action, after] of SIDECAR_CHANGES) {
 // Each file is reached by path exactly once, by one openSync, whatever the
 // exit. A preload wraps every public function of node:fs and node:fs/promises
 // (constructors aside) and logs each call with an argument that names the
-// package or the .sha256: a string, URL, Buffer or any other ArrayBufferView,
+// package or the .sha256: a string, a URL or URL-like object (href), a Buffer
+// or any other ArrayBufferView,
 // matched by device and inode (lstat and stat), so another spelling of the
 // same path (/proc/self/cwd/..., /proc/self/fd/N) counts too. Calls that bypass
 // the public fs module, or reach the files only through their folder (cpSync,
@@ -227,7 +230,8 @@ for (const [what, bytes, line, code, calls] of COUNTS) {
       + `const append = fs.appendFileSync, lstat = fs.lstatSync, log = ${JSON.stringify(log)};\n`
       + `const stat = fs.statSync, ids = (p) => [lstat, stat].map((f) => { const s = f(p, { throwIfNoEntry: false }); return s && s.dev + ':' + s.ino; });\n`
       + `const files = { [ids(${JSON.stringify(pkg(dir))})[0]]: 'package', [ids(${JSON.stringify(sidecar(dir))})[0]]: 'sha256' };\n`
-      + `const named = (x) => { try { const p = x instanceof URL ? fileURLToPath(x) : ArrayBuffer.isView(x)\n`
+      + `const named = (x) => { try { const p = x instanceof URL ? fileURLToPath(x)\n`
+      + `  : x !== null && typeof x === 'object' && typeof x.href === 'string' ? fileURLToPath(x.href) : ArrayBuffer.isView(x)\n`
       + `  ? Buffer.from(x.buffer, x.byteOffset, x.byteLength) : typeof x === 'string' ? x : null;\n`
       + `  return p !== null && ids(p).map((i) => files[i]).find(Boolean); } catch { return undefined; } };\n`
       + `for (const [where, mod] of [['', fs], ['promises.', fs.promises]]) for (const k of Object.keys(mod)) {\n`
