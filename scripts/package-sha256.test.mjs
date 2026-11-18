@@ -137,6 +137,7 @@ const phasePreload = (dir, path, phase, action) => {
     + `  return n; };\nsyncBuiltinESMExports();\n`);
   return pathToFileURL(preload).href;
 };
+const BOTH = ['package openSync', 'sha256 openSync'];
 const countPreload = (dir) => {
   const preload = join(dir, 'count.mjs'), log = join(dir, 'calls.log');
   writeFileSync(log, '');
@@ -174,16 +175,24 @@ const phased = (dir, path, phase, action) => {
   return r;
 };
 
-// A read that fails (EIO from the first read) still gets the second fstat of
-// the same descriptor before the error is reported (exit 2).
+// A read that fails, whatever its error and at whatever read, still gets the
+// second fstat of the same descriptor before that error is reported (exit 2,
+// its own message), and reaches each file by path once.
+const FAILURES = [['EIO', "Object.assign(new Error('read fake EIO'), { code: 'EIO' })"],
+  ['ETIMEDOUT', "Object.assign(new Error('read fake ETIMEDOUT'), { code: 'ETIMEDOUT' })"], ['no code', "new Error('read fake no code')"]];
 for (const [file, at] of [['package', pkg], ['.sha256', sidecar]]) {
-  test(`--verify takes the second fstat of the ${file} when a read fails (exit 2)`, within((dir) => {
-    const href = phasePreload(dir, at(dir), 'first', "throw Object.assign(new Error('EIO fake'), { code: 'EIO' });");
-    const r = run(dir, ['--verify'], ['--import', href]);
-    assert.equal(r.code, 2, r.out);
-    assert.match(r.out, /EIO fake/);
-    assert.equal(readFileSync(join(dir, 'fstats.txt'), 'utf8'), '2', 'fstat calls on the target');
-  }));
+  for (const phase of ['first', 'last', 'eof']) {
+    for (const [what, error] of FAILURES) {
+      test(`--verify takes the second fstat of the ${file} when a read fails (${what}, ${phase}) (exit 2)`, within((dir) => {
+        const href = phasePreload(dir, at(dir), phase, `throw ${error};`), count = countPreload(dir);
+        const r = run(dir, ['--verify'], ['--import', href, '--import', count.href]);
+        assert.equal(r.code, 2, r.out);
+        assert.match(r.out, new RegExp(`read fake ${what}`));
+        assert.equal(readFileSync(join(dir, 'fstats.txt'), 'utf8'), '2', 'fstat calls on the target');
+        assert.deepEqual(count.calls(), at === pkg ? BOTH : ['sha256 openSync']);
+      }));
+    }
+  }
 }
 
 // Reads come back short (7 bytes at most each): the script still reads both
@@ -262,7 +271,6 @@ for (const [what, phase, action, after] of SIDECAR_CHANGES) {
 // the public fs module, or reach the files only through their folder (cpSync,
 // globSync on dist/) or from a worker thread or child process, are left to
 // review.
-const BOTH = ['package openSync', 'sha256 openSync'];
 const fifo = (path) => { rmSync(path); assert.equal(spawnSync('mkfifo', [path]).status, 0); };
 const folder = (path) => { rmSync(path); mkdirSync(path); };
 const link = (path) => { writeFileSync(`${path}.good`, readFileSync(path)); rmSync(path); symlinkSync(`${path}.good`, path); };
