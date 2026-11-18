@@ -59,9 +59,8 @@ final class UpdateOfferTests: XCTestCase {
     }
 
     func testLosaVerzijaNeDajePonudu() {
-        // 10 digits is valid for the server, but the client reads versions only through ClientVersion.parse (at most 9).
         assertRefused("version", [
-            "1.0", "1.0.0.0", "01.0.0", "1.00.0", "1.0.0-beta", "1.0.0+1", "v1.0.0", "", "1.0.0\n", "\u{FF11}.0.0", "1234567890.0.0",
+            "1.0", "1.0.0.0", "01.0.0", "1.00.0", "1.0.0-beta", "1.0.0+1", "v1.0.0", "", "1.0.0\n", "\u{FF11}.0.0", "-1.0.0",
         ])
     }
 
@@ -99,6 +98,38 @@ final class UpdateOfferTests: XCTestCase {
         XCTAssertNil(offer(["packages": Self.rows + [Self.rows[1]]]))
         XCTAssertNil(offer(["packages": [Self.rows[1], Self.row("macos", "arm64", Self.shaArm, version: "0.1.0")]]))
         XCTAssertNil(offer(["packages": Self.rows + [Self.row("windows", "arm64", Self.shaWin), Self.rows[1]]]), "more than 4 rows")
+    }
+
+    // A key given twice: JSONSerialization keeps one value, so the raw text is counted too (review FAIL 1 on #15).
+    func testDvaputNavedenKljucNeDajePonudu() {
+        let bad = "\"sha256\":\"\(Self.shaArm.uppercased())\","
+        let arm = "{\"system\":\"macos\",\"architecture\":\"arm64\",\"version\":\"1.0.0\",\"url\":\"/a.pkg\","
+        let good = "\"sha256\":\"\(Self.shaArm)\"}"
+        let cases = [
+            "{\"packages\":[\(arm)\(good)]}",
+            "{\"packages\":[\(arm)\(bad)\(good)]}",
+            "{\"packages\":[\(arm)\(good.dropLast()),\(good)]}",
+            "{\"packages\":[\(arm)\"sha\\u0032\\u00356\":\"x\",\(good)]}",
+            "{\"packages\":[],\"packages\":[\(arm)\(good)]}",
+            "{\"packages\" :[\(arm)\"url\"\t: \"/b.pkg\",\(good)]}",
+        ]
+        let spaced = " {\"packages\" :\n[ \(arm)\"sha256\"\r\n:\t\"\(Self.shaArm)\" } ] } "
+        for control in [cases[0], spaced] {
+            XCTAssertNotNil(UpdateOffer.offer(manifest: Data(control.utf8), architecture: .arm64, installed: "0.9.0"), control)
+        }
+        for text in cases.dropFirst() {
+            XCTAssertNil(UpdateOffer.offer(manifest: Data(text.utf8), architecture: .arm64, installed: "0.9.0"), text)
+        }
+    }
+
+    // Any number of digits is valid in the contract, so the comparison never goes through Int (review FAIL 2 on #15).
+    func testDugaVerzijaPoUgovoru() {
+        let long = "123456789012345678901234567890"
+        for (offered, installed) in [("1234567890.0.0", "0.9.0"), ("\(long).0.0", "\(long.dropLast()).9.9"), ("1.0.\(long)", "1.0.9")] {
+            XCTAssertEqual(offer(["packages": [Self.row("macos", "arm64", Self.shaArm, version: offered)]], installed: installed)?.version, offered)
+            XCTAssertNil(offer(["packages": [Self.row("macos", "arm64", Self.shaArm, version: installed)]], installed: offered))
+            XCTAssertNil(offer(["packages": [Self.row("macos", "arm64", Self.shaArm, version: offered)]], installed: offered))
+        }
     }
 
     func testJednakaIliStarijaVerzijaNeDajePonudu() {
