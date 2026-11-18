@@ -77,9 +77,9 @@ const BAD_LINES = [
   ['tab', `${SHA}\t${NAME}\n`],
   ['one space', `${SHA} ${NAME}\n`],
   ['three spaces', `${SHA}   ${NAME}\n`],
-  ['NBSP', `${SHA}  ${NAME}\n`],
+  ['two NBSP', `${SHA}\u00a0\u00a0${NAME}\n`],
   ['DEL at the end', `${SHA}  ${NAME}\u007f\n`],
-  ['BOM', `﻿${SHA}  ${NAME}\n`],
+  ['BOM', `\ufeff${SHA}  ${NAME}\n`],
   ['uppercase hex', `${SHA.toUpperCase()}  ${NAME}\n`],
   ['63 hex', `${SHA.slice(1)}  ${NAME}\n`],
   ['65 hex', `${SHA}0  ${NAME}\n`],
@@ -93,24 +93,54 @@ const BAD_LINES = [
   ['NUL', `${SHA}  ${NAME}\0\n`],
   ['line after the line', `${SHA}  ${NAME}\n\n`],
   ['longer than 84 bytes', `${SHA}  ${NAME}\n${' '.repeat(1000)}`],
+  // Exactly 84 bytes, so these reach the line pattern, not only the size check.
+  ['two tabs', `${SHA}\t\t${NAME}\n`],
+  ['tab and space', `${SHA}\t ${NAME}\n`],
+  ['space and tab', `${SHA} \t${NAME}\n`],
+  ['one NBSP', `${SHA}\u00a0${NAME}\n`],
+  ['two LF as separator', `${SHA}\n\n${NAME}\n`],
+  ['CR instead of LF', `${SHA}  ${NAME}\r`],
+  ['DEL instead of LF', `${SHA}  ${NAME}\u007f`],
+  ['NUL instead of LF', `${SHA}  ${NAME}\0`],
+  ['space instead of LF', `${SHA}  ${NAME} `],
 ];
+const EXACT_SIZE = new Set(['two tabs', 'tab and space', 'space and tab', 'one NBSP', 'two LF as separator',
+  'CR instead of LF', 'DEL instead of LF', 'NUL instead of LF', 'space instead of LF']);
 for (const [name, line] of BAD_LINES) {
   test(`--verify refuses a .sha256 line (exit 2): ${name}`, within((dir) => {
     writeFileSync(sidecar(dir), line);
     assert.notEqual(line, `${SHA}  ${NAME}\n`);
+    if (EXACT_SIZE.has(name)) assert.equal(Buffer.byteLength(line), 84);
     const r = run(dir, '--verify');
     assert.equal(r.code, 2, r.out);
   }));
 }
 
-for (const byte of [0xc4, 0xe4]) {
-  test(`--verify refuses a non-ASCII byte in a .sha256 of the right length (exit 2): ${byte.toString(16)}`, within((dir) => {
-    const line = Buffer.from(`${SHA}  ${NAME}\n`);
-    line[line.length - 5] = byte;
+// The good line with one byte given the high bit (0x80): an ASCII decoding that
+// drops that bit would read it back as the good line.
+const GOOD = `${SHA}  ${NAME}\n`;
+for (const at of [0, SHA.indexOf('0'), 64, GOOD.indexOf('.'), 83]) {
+  test(`--verify refuses a high-bit byte in a .sha256 of the right length (exit 2): offset ${at}`, within((dir) => {
+    const line = Buffer.from(GOOD);
+    line[at] |= 0x80;
     writeFileSync(sidecar(dir), line);
     assert.equal(run(dir, '--verify').code, 2);
   }));
 }
+
+test('--verify refuses a .sha256 that is a symbolic link to a good line (exit 2)', within((dir) => {
+  writeFileSync(join(dir, 'good.sha256'), GOOD);
+  symlinkSync(join(dir, 'good.sha256'), sidecar(dir));
+  assert.equal(run(dir, '--verify').code, 2);
+}));
+
+test('writing does not follow a .sha256 symbolic link (exit 2, target unchanged)', within((dir) => {
+  writeFileSync(join(dir, 'outside.txt'), 'keep');
+  symlinkSync(join(dir, 'outside.txt'), sidecar(dir));
+  assert.equal(run(dir).code, 2);
+  assert.equal(readFileSync(join(dir, 'outside.txt'), 'utf8'), 'keep');
+  assert.deepEqual(readFileSync(join(dir, 'dist', NAME)), BYTES);
+}));
 
 test('--verify without a .sha256 file exits 2', within((dir) => {
   assert.equal(run(dir, '--verify').code, 2);
@@ -162,7 +192,7 @@ function ciProblems(wf) {
     if (found.length !== 1) problems.push(`${what}: ${found.length} steps`);
     return found[0] ?? -1;
   };
-  const node = at((s) => /^actions\/setup-node@[0-9a-f]{40}$/.test(s?.uses ?? ''), 'setup-node');
+  const node = at((s) => /^actions\/setup-node@/.test(s?.uses ?? ''), 'setup-node');
   const build = at((s) => s?.run === './scripts/build-dmg.sh', 'build');
   const write = at((s) => s?.run === WRITE, 'write');
   const functional = at((s) => String(s?.run ?? '').startsWith('./Tests/functional/'), 'functional');
@@ -171,9 +201,16 @@ function ciProblems(wf) {
   if (!(node < build && write === build + 1 && functional > write && verify > functional && upload === verify + 1)) {
     problems.push('order');
   }
-  for (const [i, what] of [[write, 'write'], [verify, 'verify'], [upload, 'upload']]) {
-    if (steps[i] && ('if' in steps[i] || 'continue-on-error' in steps[i])) problems.push(`${what} may be skipped`);
+  // Only these keys, so no if, continue-on-error, shell, env or working-directory.
+  const keys = [[node, 'setup-node', ['uses', 'with']], [write, 'write', ['name', 'run']],
+    [verify, 'verify', ['name', 'run']], [upload, 'upload', ['uses', 'with']]];
+  for (const [i, what, allowed] of keys) {
+    for (const k of Object.keys(steps[i] ?? {})) if (!allowed.includes(k)) problems.push(`${what} key ${k}`);
   }
+  // setup-node: the same full SHA as in ci-ok-test, Node 24.
+  const pinned = (wf?.jobs?.['ci-ok-test']?.steps ?? []).find((s) => /^actions\/setup-node@[0-9a-f]{40}$/.test(s?.uses ?? ''));
+  if (!pinned || steps[node]?.uses !== pinned.uses) problems.push('setup-node pin');
+  if (JSON.stringify(steps[node]?.with) !== '{"node-version":24}') problems.push('setup-node version');
   const w = steps[upload]?.with ?? {};
   const paths = String(w.path ?? '').split('\n').map((p) => p.trim()).filter(Boolean).sort();
   if (w.name !== 'Ductura-macOS') problems.push('artifact name');
@@ -192,10 +229,11 @@ test('ci.yml writes, verifies and uploads the hash with the package', () => {
 
 const steps = (wf) => wf.jobs['build-test'].steps;
 const findRun = (wf, run) => steps(wf).findIndex((s) => s.run === run);
+const setupNode = (wf) => steps(wf).find((s) => String(s.uses).startsWith('actions/setup-node@'));
 const MUTATIONS = [
   ['upload without .sha256', 'artifact paths', (wf) => { steps(wf).at(-1).with.path = `dist/${NAME}`; }],
   ['upload with a glob', 'artifact paths', (wf) => { steps(wf).at(-1).with.path = 'dist/*'; }],
-  ['upload may be skipped', 'upload may be skipped', (wf) => { steps(wf).at(-1).if = 'always()'; }],
+  ['upload may be skipped', 'upload key if', (wf) => { steps(wf).at(-1).if = 'always()'; }],
   ['--verify || true', 'verify: 0 steps', (wf) => { steps(wf)[findRun(wf, VERIFY)].run = `${VERIFY} || true`; }],
   ['if-no-files-found left at warn', 'if-no-files-found', (wf) => { delete steps(wf).at(-1).with['if-no-files-found']; }],
   ['--verify before the functional test', 'order', (wf) => {
@@ -203,8 +241,13 @@ const MUTATIONS = [
     steps(wf).splice(findRun(wf, WRITE) + 1, 0, v);
   }],
   ['a step between --verify and upload', 'order', (wf) => { steps(wf).splice(findRun(wf, VERIFY) + 1, 0, { run: 'touch dist/x' }); }],
-  ['--verify may be skipped', 'verify may be skipped', (wf) => { steps(wf)[findRun(wf, VERIFY)]['continue-on-error'] = true; }],
+  ['--verify may be skipped', 'verify key continue-on-error', (wf) => { steps(wf)[findRun(wf, VERIFY)]['continue-on-error'] = true; }],
+  ['--verify run by a shell that ignores it', 'verify key shell', (wf) => { steps(wf)[findRun(wf, VERIFY)].shell = 'sh -c "true" {0}'; }],
+  ['write may be skipped', 'write key if', (wf) => { steps(wf)[findRun(wf, WRITE)].if = 'false'; }],
   ['no write step', 'write: 0 steps', (wf) => { steps(wf).splice(findRun(wf, WRITE), 1); }],
+  ['setup-node on another SHA', 'setup-node pin', (wf) => { setupNode(wf).uses = `actions/setup-node@${'0'.repeat(40)}`; }],
+  ['setup-node on Node 18', 'setup-node version', (wf) => { setupNode(wf).with['node-version'] = 18; }],
+  ['setup-node may be skipped', 'setup-node key if', (wf) => { setupNode(wf).if = 'false'; }],
   ['tests not run in ci-ok-test', 'ci-ok-test', (wf) => { wf.jobs['ci-ok-test'].steps = []; }],
 ];
 for (const [name, problem, mutate] of MUTATIONS) {

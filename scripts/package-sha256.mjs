@@ -5,7 +5,7 @@
 // works in the unpacked artifact. Paths are relative to the working folder
 // (the repository root in CI). Every error other than a different hash exits 2.
 import { createHash } from 'node:crypto';
-import { createReadStream, lstatSync, readFileSync, writeFileSync } from 'node:fs';
+import { constants, createReadStream, lstatSync, readFileSync, writeFileSync } from 'node:fs';
 
 const NAME = 'Ductura-macOS.dmg';
 const PACKAGE = `dist/${NAME}`;
@@ -44,7 +44,8 @@ function recordedHash() {
 async function main(args) {
   if (args.length === 0) {
     const sha = await packageHash();
-    writeFileSync(SIDECAR, `${sha}  ${NAME}\n`);
+    // O_NOFOLLOW: a .sha256 that is a link is refused, not written through.
+    writeFileSync(SIDECAR, `${sha}  ${NAME}\n`, { flag: constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW });
     console.log(`${SIDECAR}: ${sha}`);
     return 0;
   }
