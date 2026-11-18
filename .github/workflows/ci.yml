@@ -18,8 +18,8 @@ jobs:
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with: { name: Ductura-macOS, path: dist/Ductura-macOS.dmg }
 
-  # Node checks on Linux: ci-ok itself (DAN-885) and the contract client
-  # (DAN-959). build-test stays as it is.
+  # Node checks on Linux: ci-ok itself (DAN-885), the contract client
+  # (DAN-959) and the package SHA-256 check (DAN-1075). build-test stays as it is.
   ci-ok-test:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -38,6 +38,8 @@ jobs:
         run: node --test scripts/ci-ok.test.mjs
       - name: Contract client tests
         run: node --test scripts/contracts.test.mjs
+      - name: Package SHA-256 tests
+        run: node --test scripts/package-sha256.test.mjs
       # Exit 1: the committed Swift differs from the locked OpenAPI; 2: the locked tarball is not usable.
       - name: Generated Swift matches the locked OpenAPI
         run: node scripts/contracts.mjs --check
