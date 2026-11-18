@@ -62,33 +62,65 @@ test('--verify exits 0 on the untouched package', within((dir) => {
   assert.match(r.out, /matches/);
 }));
 
+// The whole hash is compared: a recorded hash one hex digit off fails.
+for (const [where, line] of [['first', `0${GOOD.slice(1)}`], ['last', `${SHA.slice(0, 63)}1  ${NAME}\n`]]) {
+  test(`--verify exits 1 when the ${where} hex digit of the recorded hash differs`, within((dir) => {
+    assert.notEqual(line, GOOD);
+    const r = run(dir);
+    assert.equal(r.code, 1, r.out);
+    assert.match(r.out, /differs/);
+  }, BYTES, line));
+}
+
+// Rows of another length stop at the size check, rows of 84 bytes at the line
+// pattern; each asserts its own message, so neither check stands in for the other.
+const SIZE = /not one line of 84 bytes/, PATTERN = /is not "<64 lowercase hex>  Ductura-macOS\.dmg"/;
+
 // Review c.6968945689 (#17): each file is opened once and every read goes
 // through that checked descriptor. A preload wraps fs.openSync (the script must
 // open through it); right after it opens the target (inode taken with lstat
 // when the preload loads) it renames the replacement over the path once. The
 // answer must come from the file that was opened, so a script that opens or
-// reads the path a second time, before or after the check, flips it.
+// reads the path a second time, in either order, before or after the check,
+// flips it. The last three rows open a file that fails the check and swap in
+// one that passes, so the check must also fall on the file that is read.
 const SWAPS = [
-  ['the untouched package', 'package', BYTES, GOOD, flipped(), 0],
-  ['a changed package', 'package', flipped(), GOOD, BYTES, 1],
-  ['a .sha256 with the right hash', 'sidecar', BYTES, GOOD, OTHER, 0],
-  ['a .sha256 with another hash', 'sidecar', BYTES, OTHER, GOOD, 1],
+  ['the untouched package', 'package', BYTES, GOOD, flipped(), 0, /matches/],
+  ['a changed package', 'package', flipped(), GOOD, BYTES, 1, /differs/],
+  ['a .sha256 with the right hash', 'sidecar', BYTES, GOOD, OTHER, 0, /matches/],
+  ['a .sha256 with another hash', 'sidecar', BYTES, OTHER, GOOD, 1, /differs/],
+  ['an empty package', 'package', Buffer.alloc(0), GOOD, BYTES, 2, /is empty/],
+  ['an 85-byte .sha256', 'sidecar', BYTES, `${GOOD} `, GOOD, 2, SIZE],
+  ['an 84-byte .sha256 in capitals', 'sidecar', BYTES, `${SHA.toUpperCase()}  ${NAME}\n`, GOOD, 2, PATTERN],
 ];
-for (const [what, target, bytes, line, replacement, code] of SWAPS) {
+const preloaded = (dir, path, hook, action) => {
+  const preload = join(dir, 'hook.mjs');
+  writeFileSync(preload, `import fs from 'node:fs';\nimport { syncBuiltinESMExports } from 'node:module';\n`
+    + `const path = ${JSON.stringify(path)}, ino = fs.lstatSync(path).ino, h = fs.${hook}, f = fs.fstatSync;\nlet done = false;\n`
+    + `fs.${hook} = (...a) => { const r = h(...a), fd = typeof r === 'number' ? r : a[0];\n`
+    + `  if (!done && f(fd).ino === ino) { done = true; ${action} } return r; };\nsyncBuiltinESMExports();\n`);
+  return run(dir, ['--verify'], ['--import', pathToFileURL(preload).href]);
+};
+for (const [what, target, bytes, line, replacement, code, message] of SWAPS) {
   test(`--verify reads ${what} through the checked descriptor when the path is swapped (exit ${code})`, within((dir) => {
     const path = target === 'package' ? pkg(dir) : sidecar(dir);
     const next = join(dir, 'next');
     writeFileSync(next, replacement);
-    const preload = join(dir, 'swap.mjs');
-    writeFileSync(preload, `import fs from 'node:fs';\nimport { syncBuiltinESMExports } from 'node:module';\n`
-      + `const path = ${JSON.stringify(path)}, ino = fs.lstatSync(path).ino, o = fs.openSync, f = fs.fstatSync;\nlet done = false;\n`
-      + `fs.openSync = (...a) => { const fd = o(...a); if (!done && f(fd).ino === ino) { done = true; fs.renameSync(${JSON.stringify(next)}, path); } return fd; };\n`
-      + 'syncBuiltinESMExports();\n');
-    const r = run(dir, ['--verify'], ['--import', pathToFileURL(preload).href]);
+    const r = preloaded(dir, path, 'openSync', `fs.renameSync(${JSON.stringify(next)}, path);`);
     assert.equal(r.code, code, r.out);
+    assert.match(r.out, message);
     assert.ok(readFileSync(path).equals(Buffer.from(replacement)), 'the swap happened');
   }, bytes, line));
 }
+
+// A .sha256 that grows after the size check is still refused: the line pattern
+// is anchored at both ends, so a good first line does not pass alone.
+test('--verify refuses a .sha256 that grows after the size check (exit 2)', within((dir) => {
+  const r = preloaded(dir, sidecar(dir), 'fstatSync', `fs.appendFileSync(path, ${JSON.stringify(GOOD)});`);
+  assert.equal(r.code, 2, r.out);
+  assert.match(r.out, PATTERN);
+  assert.equal(readFileSync(sidecar(dir), 'utf8'), GOOD + GOOD, 'the file grew');
+}));
 
 // Every .sha256 that is not exactly `<64 lowercase hex>  Ductura-macOS.dmg\n`.
 const BAD_LINES = [
@@ -107,9 +139,6 @@ const BAD_LINES = [
   ['two LF as separator', `${SHA}\n\n${NAME}\n`], ['CR instead of LF', `${SHA}  ${NAME}\r`],
   ['DEL instead of LF', `${SHA}  ${NAME}\u007f`], ['NUL instead of LF', `${SHA}  ${NAME}\0`], ['space instead of LF', `${SHA}  ${NAME} `],
 ];
-// Rows of another length stop at the size check, rows of 84 bytes at the line
-// pattern; each asserts its own message, so neither check stands in for the other.
-const SIZE = /not one line of 84 bytes/, PATTERN = /is not "<64 lowercase hex>  Ductura-macOS\.dmg"/;
 const EXACT = BAD_LINES.findIndex(([name]) => name === 'non-hex letter');
 BAD_LINES.forEach(([name, line], i) => {
   test(`--verify refuses a .sha256 line (exit 2): ${name}`, within((dir) => {
@@ -172,12 +201,46 @@ for (const args of [[], ['--Verify'], ['--verify', 'extra'], ['--verify', '--ver
   }));
 }
 
-// The tests run in CI: ci-ok-test has exactly one step running them, with only
-// a name and the command (no if, continue-on-error or shell to quiet it).
-test('ci-ok-test runs these tests in one plain step', () => {
-  const steps = parse(readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8')).jobs['ci-ok-test'].steps;
+// The tests run in CI and nothing quiets them: ci-ok-test has exactly one step
+// running them, with only a name and the command; the workflow, the job and its
+// steps carry no keys that could skip, soften or reconfigure them (env,
+// defaults, if, continue-on-error, shell), and no step writes GITHUB_ENV or
+// GITHUB_PATH or sets NODE_OPTIONS. Each change to a copy must be caught.
+const WORKFLOW = parse(readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8'));
+const extra = (keys, allowed) => Object.keys(keys ?? {}).filter((k) => !allowed.includes(k));
+function ciProblems(wf) {
+  const job = wf.jobs?.['ci-ok-test'] ?? {};
+  const steps = Array.isArray(job.steps) ? job.steps : [];
   const ours = steps.filter((s) => JSON.stringify(s).includes('package-sha256'));
-  assert.equal(ours.length, 1);
-  assert.deepEqual(Object.keys(ours[0]).sort(), ['name', 'run']);
-  assert.equal(ours[0].run, 'node --test scripts/package-sha256.test.mjs');
-});
+  return [
+    ...extra(wf, ['name', 'on', 'permissions', 'jobs']).map((k) => `workflow key ${k}`),
+    ...extra(job, ['runs-on', 'timeout-minutes', 'permissions', 'steps']).map((k) => `job key ${k}`),
+    ...steps.flatMap((s) => extra(s, ['name', 'uses', 'with', 'run']).map((k) => `step key ${k}`)),
+    ...steps.filter((s) => /GITHUB_ENV|GITHUB_PATH|NODE_OPTIONS/.test(JSON.stringify(s))).map(() => 'step changes the environment'),
+    ...(ours.length === 1 && extra(ours[0], ['name', 'run']).length === 0
+      && ours[0].run === 'node --test scripts/package-sha256.test.mjs' ? [] : ['not one plain test step']),
+  ];
+}
+test('ci-ok-test runs these tests in one plain step that nothing quiets', () => assert.deepEqual(ciProblems(WORKFLOW), []));
+const OURS = (wf) => wf.jobs['ci-ok-test'].steps.find((s) => s.run === 'node --test scripts/package-sha256.test.mjs');
+const SKIP = { NODE_OPTIONS: '--test-skip-pattern=.' };
+for (const [what, change, problem] of [
+  ['workflow env', (wf) => { wf.env = SKIP; }, 'workflow key env'],
+  ['workflow defaults', (wf) => { wf.defaults = { run: { shell: 'bash' } }; }, 'workflow key defaults'],
+  ['job env', (wf) => { wf.jobs['ci-ok-test'].env = SKIP; }, 'job key env'],
+  ['job defaults', (wf) => { wf.jobs['ci-ok-test'].defaults = { run: { shell: 'true {0}' } }; }, 'job key defaults'],
+  ['job continue-on-error', (wf) => { wf.jobs['ci-ok-test']['continue-on-error'] = true; }, 'job key continue-on-error'],
+  ['step env', (wf) => { OURS(wf).env = SKIP; }, 'step key env'],
+  ['step if', (wf) => { OURS(wf).if = 'false'; }, 'step key if'],
+  ['step shell', (wf) => { OURS(wf).shell = 'true {0}'; }, 'step key shell'],
+  ['a step writing GITHUB_ENV', (wf) => { wf.jobs['ci-ok-test'].steps.unshift({ run: 'echo "NODE_OPTIONS=--test-skip-pattern=." >> "$GITHUB_ENV"' }); }, 'step changes the environment'],
+  ['the step softened', (wf) => { OURS(wf).run += ' || true'; }, 'not one plain test step'],
+  ['the step twice', (wf) => { wf.jobs['ci-ok-test'].steps.push({ ...OURS(wf) }); }, 'not one plain test step'],
+  ['the step removed', (wf) => { wf.jobs['ci-ok-test'].steps = wf.jobs['ci-ok-test'].steps.filter((s) => s !== OURS(wf)); }, 'not one plain test step'],
+]) {
+  test(`the CI check catches ${what}`, () => {
+    const wf = structuredClone(WORKFLOW);
+    change(wf);
+    assert.ok(ciProblems(wf).includes(problem), JSON.stringify(ciProblems(wf)));
+  });
+}
