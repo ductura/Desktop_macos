@@ -139,14 +139,14 @@ const phasePreload = (dir, path, phase, action) => {
 const countPreload = (dir) => {
   const preload = join(dir, 'count.mjs'), log = join(dir, 'calls.log');
   writeFileSync(log, '');
-  writeFileSync(preload, `import fs from 'node:fs';\nimport { fileURLToPath } from 'node:url';\nimport { syncBuiltinESMExports } from 'node:module';\n`
+  writeFileSync(preload, `import fs from 'node:fs';\nimport { resolve } from 'node:path';\nimport { fileURLToPath } from 'node:url';\nimport { syncBuiltinESMExports } from 'node:module';\n`
     + `const append = fs.appendFileSync, lstat = fs.lstatSync, log = ${JSON.stringify(log)};\n`
     + `const stat = fs.statSync, ids = (p) => [lstat, stat].map((f) => { const s = f(p, { throwIfNoEntry: false }); return s && s.dev + ':' + s.ino; });\n`
     + `const files = {}; for (const [p, name] of [[${JSON.stringify(pkg(dir))}, 'package'], [${JSON.stringify(sidecar(dir))}, 'sha256']]) {\n`
-    + `  const [id] = ids(p); if (!id) throw new Error('count preload: ' + p + ' is missing'); files[id] = name; }\n`
+    + `  const [id] = ids(p); files[id || 'missing:' + resolve(p)] = name; }\n`
     + `const named = (x) => { try { const p = ArrayBuffer.isView(x) ? Buffer.from(x.buffer, x.byteOffset, x.byteLength)\n`
     + `  : x !== null && typeof x === 'object' && x.href ? fileURLToPath(x) : typeof x === 'string' ? x : null;\n`
-    + `  return p !== null && ids(p).map((i) => files[i]).find(Boolean); } catch { return undefined; } };\n`
+    + `  return p !== null && ([...ids(p), 'missing:' + resolve(String(p))].map((i) => files[i]).find(Boolean)); } catch { return undefined; } };\n`
     + `for (const [where, mod] of [['', fs], ['promises.', fs.promises]]) for (const k of Object.keys(mod)) {\n`
     + `  const f = mod[k]; if (typeof f !== 'function' || /^[A-Z]/.test(k)) continue;\n`
     + `  mod[k] = function (...a) { if (!globalThis.testAction) for (const x of a) { const n = named(x); if (n) append(log, n + ' ' + where + k + '\\n'); }\n`
@@ -247,6 +247,7 @@ for (const [what, phase, action, after] of SIDECAR_CHANGES) {
 const BOTH = ['package openSync', 'sha256 openSync'];
 const fifo = (path) => { rmSync(path); assert.equal(spawnSync('mkfifo', [path]).status, 0); };
 const folder = (path) => { rmSync(path); mkdirSync(path); };
+const link = (path) => { writeFileSync(`${path}.good`, readFileSync(path)); rmSync(path); symlinkSync(`${path}.good`, path); };
 const COUNTS = [
   ['the untouched package', () => {}, ['--verify'], 0, BOTH],
   ['a changed package', (dir) => writeFileSync(pkg(dir), flipped()), ['--verify'], 1, BOTH],
@@ -257,12 +258,15 @@ const COUNTS = [
   ['a package that is a FIFO', (dir) => fifo(pkg(dir)), ['--verify'], 2, BOTH],
   ['a .sha256 that is a folder', (dir) => folder(sidecar(dir)), ['--verify'], 2, ['sha256 openSync']],
   ['a .sha256 that is a FIFO', (dir) => fifo(sidecar(dir)), ['--verify'], 2, ['sha256 openSync']],
-  ['the argument --Verify', () => {}, ['--Verify'], 2, []],
-  ['no arguments', () => {}, [], 2, []],
+  ['a package that is a symbolic link', (dir) => link(pkg(dir)), ['--verify'], 2, BOTH],
+  ['a .sha256 that is a symbolic link', (dir) => link(sidecar(dir)), ['--verify'], 2, ['sha256 openSync']],
+  ['a missing package', (dir) => rmSync(pkg(dir)), ['--verify'], 2, BOTH],
+  ['a missing .sha256', (dir) => rmSync(sidecar(dir)), ['--verify'], 2, ['sha256 openSync']],
+  ...[['--Verify'], [], ['--verify', 'extra'], ['--verify', '--verify'], ['']].map((args) => [`the arguments ${JSON.stringify(args)}`, () => {}, args, 2, []]),
 ];
 for (const [what, setup, args, code, calls] of COUNTS) {
   test(`--verify reaches each file by path at most once, with openSync, for ${what} (exit ${code})`, within((dir) => {
-    setup(dir); // before the preload, which registers what is at each path
+    setup(dir); // before the preload, which registers what is at each path (or the path, when nothing is)
     const count = countPreload(dir);
     const r = run(dir, args, ['--import', count.href]);
     assert.equal(r.code, code, r.out);
@@ -272,19 +276,19 @@ for (const [what, setup, args, code, calls] of COUNTS) {
 
 // Review c.6971946493 (#20): the two fstat calls are compared in nanoseconds
 // (bigint), with inode and device. A preload makes the second fstat of the
-// target return the same except one field one unit off. Asked for numbers
+// target return the same except one field one unit off, up or down. Asked for numbers
 // (no bigint), it moves the time by 1e-6 ms, which rounds away in a double as
 // a 1 ns change mostly does in the kernel (the preload's always does), so a
 // millisecond comparison exits 0.
 for (const [file, at] of [['package', pkg], ['.sha256', sidecar]]) {
-  for (const field of ['ctimeNs', 'mtimeNs', 'ino', 'dev']) {
-    test(`--verify exits 2 when the second fstat of the ${file} differs only in ${field}`, within((dir) => {
+  for (const [field, delta] of ['ctimeNs', 'mtimeNs', 'ino', 'dev'].flatMap((f) => [[f, 1], [f, -1]])) {
+    test(`--verify exits 2 when the second fstat of the ${file} differs only in ${field} by ${delta}`, within((dir) => {
       const preload = join(dir, 'stat.mjs'), seen = join(dir, 'seen.txt');
       writeFileSync(preload, "import fs from 'node:fs';\nimport { syncBuiltinESMExports } from 'node:module';\n"
-        + `const { ino } = fs.lstatSync(${JSON.stringify(at(dir))}), f = fs.fstatSync, w = fs.writeFileSync, field = '${field}';\n`
+        + `const { ino } = fs.lstatSync(${JSON.stringify(at(dir))}), f = fs.fstatSync, w = fs.writeFileSync, field = '${field}', d = ${delta};\n`
         + `let calls = 0; process.on('exit', () => w(${JSON.stringify(seen)}, String(calls)));\n`
         + 'fs.fstatSync = (fd, o) => { const s = f(fd, o); if (f(fd).ino === ino && ++calls === 2) {\n'
-        + "  if (o?.bigint) s[field] += 1n; else if (field.endsWith('Ns')) s[field.replace('Ns', 'Ms')] += 1e-6; else s[field] += 1; }\n"
+        + "  if (o?.bigint) s[field] += BigInt(d); else if (field.endsWith('Ns')) s[field.replace('Ns', 'Ms')] += d * 1e-6; else s[field] += d; }\n"
         + '  return s; };\nsyncBuiltinESMExports();\n');
       const r = run(dir, ['--verify'], ['--import', pathToFileURL(preload).href]);
       assert.equal(r.code, 2, r.out);
