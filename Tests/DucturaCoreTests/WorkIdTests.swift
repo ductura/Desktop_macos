@@ -1,7 +1,7 @@
 import XCTest
 @testable import DucturaCore
 
-// Cases copied from ductura/server contracts/work-id.test.ts at
+// Cases copied from ductura/Institution_server contracts/work-id.test.ts at
 // 7b78d9b071dc2cb54392840bcdf353e68be865e3 (S-1H.1-c), plus the input classes
 // of the DAN-882 contract. Invented ids only. The server's "not a string"
 // cases (undefined, 7, {}, ...) cannot be expressed: the Swift type is String.

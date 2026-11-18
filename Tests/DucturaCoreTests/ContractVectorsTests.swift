@@ -53,7 +53,7 @@ enum TestFakesRelease {
               Set(object.keys) == ["version", "url", "sha256"],
               let version = object["version"] as? String, ClientVersion.parse(version) != nil,
               let url = object["url"] as? String,
-              url == "https://github.com/ductura/server/releases/download/test-fakes-v\(version)/ductura-test-fakes-\(version).tgz",
+              url == "https://github.com/ductura/Institution_server/releases/download/test-fakes-v\(version)/ductura-test-fakes-\(version).tgz",
               let sha256 = object["sha256"] as? String, sha256.utf8.count == 64,
               sha256.utf8.allSatisfy({ (0x30...0x39).contains($0) || (0x61...0x66).contains($0) })
         else { throw VectorsError(description: "test-fakes.lock.json nije ispravan: točno version (x.y.z), url izdanja te verzije i sha256 (64 mala heks znaka)") }
@@ -180,7 +180,7 @@ final class ContractVectorsTests: XCTestCase {
     }
 
     func testNeispravanLockSeOdbija() throws {
-        let url = "https://github.com/ductura/server/releases/download/test-fakes-v3.0.1/ductura-test-fakes-3.0.1.tgz"
+        let url = "https://github.com/ductura/Institution_server/releases/download/test-fakes-v3.0.1/ductura-test-fakes-3.0.1.tgz"
         let sha = String(repeating: "a", count: 64)
         func json(_ version: String = "3.0.1", u: String = url, s: String = sha, extra: String = "") -> String {
             #"{"version":"\#(version)","url":"\#(u)","sha256":"\#(s)"\#(extra)}"#
