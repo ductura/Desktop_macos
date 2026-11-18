@@ -122,6 +122,94 @@ final class UpdateOfferTests: XCTestCase {
         }
     }
 
+    // JSONSerialization also reads text that is not JSON, such as a trailing comma (review FAIL on #15,
+    // 85dfbf8). Each case is the control with one change that leaves it otherwise offerable,
+    // so only the strict RFC 8259 check can refuse it.
+    func testNestrogiJSONNeDajePonudu() {
+        let row = "{\"system\":\"macos\",\"architecture\":\"arm64\",\"version\":\"1.0.0\",\"url\":\"/a.pkg\",\"sha256\":\"\(Self.shaArm)\"}"
+        let win = "{\"system\":\"windows\",\"architecture\":\"x64\",\"version\":\"1.0.0\",\"url\":\"/b.pkg\",\"sha256\":\"\(Self.shaWin)\"}"
+        let control = "{\"packages\":[\(win),\(row)]}"
+        func offer(_ data: Data) -> UpdateOffer? { UpdateOffer.offer(manifest: data, architecture: .arm64, installed: "0.9.0") }
+        let controls = [control, " \t\r\n\(control)\n", "{\"packag\\u0065s\":[\(win),\(row)]}", "{ \"packages\" : [ \(win) , \(row) ] }"]
+        for text in controls { XCTAssertNotNil(offer(Data(text.utf8)), text) }
+        let rowOpen = String(row.dropLast())
+        let bad = [
+            "{\"packages\":[\(win),\(row),]}",
+            "{\"packages\":[\(win),\(row) , ]}",
+            "{\"packages\":[\(win),\(rowOpen),}]}",
+            "{\"packages\":[\(win),\(row)],}",
+            "{\"packages\":[,\(win),\(row)]}",
+            "{\"packages\":[\(win),,\(row)]}",
+            "{\"packages\":[\(win) \(row)]}",
+            "{,\"packages\":[\(win),\(row)]}",
+            "{packages:[\(win),\(row)]}",
+            "{'packages':[\(win),\(row)]}",
+            "/* x */\(control)",
+            "\(control)// x",
+            "{\"packages\":[\(win),//x\n\(row)]}",
+            "\(control),",
+            "\(control) x",
+            "\(control){}",
+            "\(control)\u{0}",
+            "\u{FEFF}\(control)",
+            "\u{0C}\(control)",
+            "\(control)\u{0B}",
+            "{\"packages\":\u{A0}[\(win),\(row)]}",
+            "{\"packages\":[\(win),\u{2028}\(row)]}",
+            "{\"packages\":[\(win.replacingOccurrences(of: "/b.pkg", with: "/b\\x.pkg")),\(row)]}",
+            "{\"packages\":[\(win.replacingOccurrences(of: "\"windows\"", with: "'windows'")),\(row)]}",
+        ]
+        for text in bad { XCTAssertNil(offer(Data(text.utf8)), text) }
+        // Another encoding of the same text: JSONSerialization detects UTF-16 and UTF-32 (RFC 8259 §8.1: UTF-8 only).
+        for encoding: String.Encoding in [.utf16, .utf16LittleEndian, .utf16BigEndian, .utf32, .utf32LittleEndian, .utf32BigEndian] {
+            XCTAssertNil(offer(control.data(using: encoding)!), "\(encoding)")
+        }
+        // Not UTF-8 inside a string of an extra member, which the count of members would refuse anyway,
+        // so it is checked on the reader below.
+        XCTAssertNil(offer(Data(control.utf8.dropLast()) + Data([0xFF, 0x7D])))
+    }
+
+    // The strict reader on its own: RFC 8259 grammar, one value per row; each bad text is a valid one with one change.
+    func testStrogiCitacPoRFC8259() {
+        func valid(_ bytes: [UInt8]) -> Bool { StrictJSON.isValid(Data(bytes)) }
+        let good = [
+            "{}", "[]", " [ ] ", "0", "-0", "1", "-12", "1.5", "0.0", "1e5", "1E+5", "1e-5", "-1.25E10", "\"\"", "\"a\"",
+            "true", "false", "null", "[1,2,3]", "{\"a\":1,\"b\":[true,false,null]}", "\"\\\"\\\\\\/\\b\\f\\n\\r\\t\"",
+            "\"\\u0041\\u00e9\"", "\"\\uD83D\\uDE00\"", "\"\\ud83d\\ude00\"", "\"č😀\"", "{\"a\":{\"a\":{}}}",
+            String(repeating: "[", count: StrictJSON.maxDepth) + String(repeating: "]", count: StrictJSON.maxDepth),
+            String(repeating: "{\"a\":", count: StrictJSON.maxDepth) + "1" + String(repeating: "}", count: StrictJSON.maxDepth),
+        ]
+        for text in good { XCTAssertTrue(valid(Array(text.utf8)), text) }
+        let bad = [
+            "", " ", "[1,]", "[,1]", "[1,,2]", "[1 2]", "{\"a\":1,}", "{,\"a\":1}", "{\"a\" 1}", "{\"a\":}", "{a:1}",
+            "{'a':1}", "{\"a\":1 \"b\":2}", "[1]]", "[[1]", "{}}", "{1:1}", "{null:1}",
+            "01", "-", "-a", "+1", ".5", "1.", "1.e5", "1e", "1e+", "0x10", "NaN", "Infinity", "-Infinity", "1_0", "١",
+            "tru", "True", "nul", "NULL", "falsey", "undefined",
+            "'a'", "\"a", "\"\\x\"", "\"\\'\"", "\"\\u12\"", "\"\\u12g4\"", "\"\\U0041\"", "\"\\\"",
+            "\"\\uD800\"", "\"\\uDC00\"", "\"\\uD800\\u0041\"", "\"\\uD800x\"", "\"\\uDE00\\uD83D\"",
+            "\"\t\"", "\"\n\"", "\"\u{0}\"", "\"\u{1F}\"",
+            "/**/1", "1//", "# x\n1", "1 2", "[] []", "1\u{0}", "\u{FEFF}1", "\u{0C}1", "1\u{0B}", "\u{A0}1", "\u{3000}1",
+            String(repeating: "[", count: StrictJSON.maxDepth + 1) + String(repeating: "]", count: StrictJSON.maxDepth + 1),
+            String(repeating: "{\"a\":", count: StrictJSON.maxDepth + 1) + "1" + String(repeating: "}", count: StrictJSON.maxDepth + 1),
+        ]
+        for text in bad { XCTAssertFalse(valid(Array(text.utf8)), text.debugDescription) }
+        // Not well-formed UTF-8 inside a string (RFC 3629): stray, overlong, surrogate, above U+10FFFF, cut short.
+        let badUTF8: [[UInt8]] = [[0x80], [0xBF], [0xC0, 0x80], [0xC1, 0xBF], [0xE0, 0x80, 0x80], [0xE0, 0x9F, 0xBF],
+                                  [0xED, 0xA0, 0x80], [0xED, 0xBF, 0xBF], [0xF0, 0x80, 0x80, 0x80], [0xF0, 0x8F, 0xBF, 0xBF],
+                                  [0xF4, 0x90, 0x80, 0x80], [0xF5, 0x80, 0x80, 0x80], [0xFF], [0xFE], [0xC3], [0xE2, 0x82],
+                                  [0xF0, 0x9F, 0x98], [0xC3, 0x41], [0xE2, 0x41, 0xAC], [0xF0, 0x9F, 0x41, 0x80], [0xF0, 0x9F, 0x98, 0x41]]
+        let goodUTF8: [[UInt8]] = [[0xC2, 0x80], [0xDF, 0xBF], [0xE0, 0xA0, 0x80], [0xED, 0x9F, 0xBF], [0xEE, 0x80, 0x80],
+                                   [0xF0, 0x90, 0x80, 0x80], [0xF4, 0x8F, 0xBF, 0xBF], [0x7F]]
+        for bytes in goodUTF8 { XCTAssertTrue(valid([0x22] + bytes + [0x22]), "\(bytes)") }
+        for bytes in badUTF8 { XCTAssertFalse(valid([0x22] + bytes + [0x22]), "\(bytes)") }
+        // Cut short at the end of the data, with no closing quote.
+        for bytes in [[0xC3], [0xE2, 0x82], [0xF0, 0x9F, 0x98]] as [[UInt8]] { XCTAssertFalse(valid([0x22] + bytes), "\(bytes)") }
+        // The same text in UTF-16 or UTF-32 is not UTF-8.
+        for encoding: String.Encoding in [.utf16LittleEndian, .utf16BigEndian, .utf32LittleEndian, .utf32BigEndian] {
+            XCTAssertFalse(StrictJSON.isValid("{\"a\":1}".data(using: encoding)!), "\(encoding)")
+        }
+    }
+
     // Any number of digits is valid in the contract, so the comparison never goes through Int (review FAIL 2 on #15).
     func testDugaVerzijaPoUgovoru() {
         let long = "123456789012345678901234567890"
