@@ -175,7 +175,7 @@ final class UpdateOfferTests: XCTestCase {
         let good = [
             "{}", "[]", " [ ] ", "0", "-0", "1", "-12", "1.5", "0.0", "1e5", "1E+5", "1e-5", "-1.25E10", "\"\"", "\"a\"",
             "true", "false", "null", "[1,2,3]", "{\"a\":1,\"b\":[true,false,null]}", "\"\\\"\\\\\\/\\b\\f\\n\\r\\t\"",
-            "\"\\u0041\\u00e9\"", "\"\\uD83D\\uDE00\"", "\"\\ud83d\\ude00\"", "\"č😀\"", "{\"a\":{\"a\":{}}}",
+            "\"\\u0041\\u00e9\"", "\"\\uD83D\\uDE00\"", "\"\\ud83d\\ude00\"", "\"č😀\"", "\"€\u{40000}\u{FFFD}\"", "{ }", "[ ]", "{\"a\":{\"a\":{}}}",
             String(repeating: "[", count: StrictJSON.maxDepth) + String(repeating: "]", count: StrictJSON.maxDepth),
             String(repeating: "{\"a\":", count: StrictJSON.maxDepth) + "1" + String(repeating: "}", count: StrictJSON.maxDepth),
         ]
@@ -183,10 +183,10 @@ final class UpdateOfferTests: XCTestCase {
         let bad = [
             "", " ", "[1,]", "[,1]", "[1,,2]", "[1 2]", "{\"a\":1,}", "{,\"a\":1}", "{\"a\" 1}", "{\"a\":}", "{a:1}",
             "{'a':1}", "{\"a\":1 \"b\":2}", "[1]]", "[[1]", "{}}", "{1:1}", "{null:1}",
-            "01", "-", "-a", "+1", ".5", "1.", "1.e5", "1e", "1e+", "0x10", "NaN", "Infinity", "-Infinity", "1_0", "١",
+            "01", "00", "-01", "1e+-5", "1e--5", "-", "-a", "+1", ".5", "1.", "1.e5", "1e", "1e+", "0x10", "NaN", "Infinity", "-Infinity", "1_0", "١",
             "tru", "True", "nul", "NULL", "falsey", "undefined",
             "'a'", "\"a", "\"\\x\"", "\"\\'\"", "\"\\u12\"", "\"\\u12g4\"", "\"\\U0041\"", "\"\\\"",
-            "\"\\uD800\"", "\"\\uDC00\"", "\"\\uD800\\u0041\"", "\"\\uD800x\"", "\"\\uDE00\\uD83D\"",
+            "\"\\uD800\"", "\"\\uDC00\"", "\"\\uD800\\u0041\"", "\"\\uD800\\uD800\"", "\"\\uDBFF\"", "\"\\uDFFF\"", "\"\\u00G0\"", "\"\\uD800x\"", "\"\\uDE00\\uD83D\"",
             "\"\t\"", "\"\n\"", "\"\u{0}\"", "\"\u{1F}\"",
             "/**/1", "1//", "# x\n1", "1 2", "[] []", "1\u{0}", "\u{FEFF}1", "\u{0C}1", "1\u{0B}", "\u{A0}1", "\u{3000}1",
             String(repeating: "[", count: StrictJSON.maxDepth + 1) + String(repeating: "]", count: StrictJSON.maxDepth + 1),
