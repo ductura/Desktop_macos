@@ -17,8 +17,8 @@ const { O_RDONLY, O_NOFOLLOW, O_NONBLOCK } = constants;
 
 // Opens a path for reading once, never through a symbolic link (O_NOFOLLOW)
 // and never waiting on a FIFO (O_NONBLOCK). The descriptor must be a regular
-// file and `check` may refuse it. `read` reads only through that descriptor
-// and returns the number of bytes it took; then a second fstat of the same
+// file and `check` may refuse it. `read` reads only through that descriptor,
+// at most one byte past the checked size, and returns the bytes it took; then a second fstat of the same
 // descriptor must show the same size, mtime and ctime, and the bytes taken
 // must be that size, so a file changed while it was read is refused.
 function use(path, check, read) {
@@ -32,7 +32,7 @@ function use(path, check, read) {
     const before = fstatSync(fd);
     if (!before.isFile()) throw new Error(`${path} is not a regular file`);
     check(before);
-    const bytes = read(fd);
+    const bytes = read(fd, before.size + 1);
     const after = fstatSync(fd);
     if (bytes !== before.size || after.size !== before.size
       || after.mtimeMs !== before.mtimeMs || after.ctimeMs !== before.ctimeMs) {
@@ -56,8 +56,8 @@ function readAll(fd, limit, take) {
 function packageHash() {
   const refuseEmpty = (size) => { if (size === 0) throw new Error(`${PACKAGE} is empty`); };
   const hash = createHash('sha256');
-  use(PACKAGE, (stat) => refuseEmpty(stat.size), (fd) => {
-    const bytes = readAll(fd, Infinity, (chunk) => hash.update(chunk));
+  use(PACKAGE, (stat) => refuseEmpty(stat.size), (fd, limit) => {
+    const bytes = readAll(fd, limit, (chunk) => hash.update(chunk));
     refuseEmpty(bytes); // emptied after the check: "empty", not the hash of no bytes
     return bytes;
   });
@@ -65,13 +65,14 @@ function packageHash() {
 }
 
 // The hash from the .sha256 file, which must be exactly `<hex>  <name>\n`.
-// It is read to EOF but at most one byte past the line, so growth is seen.
+// Like the package, it is read to EOF but at most one byte past the checked
+// size, which oneLine fixed at the line, so growth is seen.
 function recordedHash() {
   const oneLine = (stat) => {
     if (stat.size !== LINE_BYTES) throw new Error(`${SIDECAR} is not one line of ${LINE_BYTES} bytes`);
   };
   const chunks = [];
-  use(SIDECAR, oneLine, (fd) => readAll(fd, LINE_BYTES + 1, (chunk) => chunks.push(Buffer.from(chunk))));
+  use(SIDECAR, oneLine, (fd, limit) => readAll(fd, limit, (chunk) => chunks.push(Buffer.from(chunk))));
   // latin1 maps each byte to one character; LINE accepts only ASCII.
   const match = LINE.exec(Buffer.concat(chunks).toString('latin1'));
   if (!match) throw new Error(`${SIDECAR} is not "<64 lowercase hex>  ${NAME}"`);

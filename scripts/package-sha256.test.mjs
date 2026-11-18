@@ -124,18 +124,22 @@ for (const [what, target, bytes, line, replacement, code, message] of SWAPS) {
 // script must notice by a second fstat of the same descriptor. Each row checks
 // that the change happened.
 const CHANGED = /changed while being read/;
-const phased = (dir, path, phase, action) => {
+const phasePreload = (dir, path, phase, action) => {
   const preload = join(dir, 'phase.mjs');
   writeFileSync(preload, `import fs from 'node:fs';\nimport { syncBuiltinESMExports } from 'node:module';\n`
     + `const path = ${JSON.stringify(path)}, phase = ${JSON.stringify(phase)}, f = fs.fstatSync, rs = fs.readSync;\n`
     + `const { ino, size } = fs.lstatSync(path); let stats = 0, reads = 0, total = 0, done = false;\n`
-    + `const fire = () => { if (!done) { done = true; ${action} } };\n`
+    + `const fire = () => { if (!done) { done = true; globalThis.testAction = true; try { ${action} } finally { globalThis.testAction = false; } } };\n`
     + `fs.fstatSync = (fd, ...a) => { const s = f(fd, ...a); if (s.ino === ino && ++stats === 1 && phase === 'check') fire(); return s; };\n`
     + `fs.readSync = (fd, ...a) => { const n = rs(fd, ...a); if (f(fd).ino === ino) { reads++; total += n;\n`
     + `  if ((phase === 'first' && reads === 1) || (phase === 'last' && n > 0 && total === size) || (phase === 'eof' && n === 0)) fire(); }\n`
     + `  return n; };\nsyncBuiltinESMExports();\n`);
+  return pathToFileURL(preload).href;
+};
+const phased = (dir, path, phase, action, node = []) => {
+  const href = phasePreload(dir, path, phase, action);
   const ctime = statSync(path, { bigint: true }).ctimeNs;
-  const r = run(dir, ['--verify'], ['--import', pathToFileURL(preload).href]);
+  const r = run(dir, ['--verify'], ['--import', href, ...node]);
   // Precondition: the clock moved ctime, so a row cannot pass on a change the
   // file system did not record.
   assert.notEqual(statSync(path, { bigint: true }).ctimeNs, ctime, 'ctime moved');
@@ -223,25 +227,66 @@ const COUNTS = [
   ['an 84-byte .sha256 in capitals', BYTES, `${SHA.toUpperCase()}  ${NAME}\n`, 2, ['sha256 openSync']],
   ['an empty package', Buffer.alloc(0), GOOD, 2, ['package openSync', 'sha256 openSync']],
 ];
+const countPreload = (dir) => {
+  const preload = join(dir, 'count.mjs'), log = join(dir, 'calls.log');
+  writeFileSync(log, '');
+  writeFileSync(preload, `import fs from 'node:fs';\nimport { fileURLToPath } from 'node:url';\nimport { syncBuiltinESMExports } from 'node:module';\n`
+    + `const append = fs.appendFileSync, lstat = fs.lstatSync, log = ${JSON.stringify(log)};\n`
+    + `const stat = fs.statSync, ids = (p) => [lstat, stat].map((f) => { const s = f(p, { throwIfNoEntry: false }); return s && s.dev + ':' + s.ino; });\n`
+    + `const files = { [ids(${JSON.stringify(pkg(dir))})[0]]: 'package', [ids(${JSON.stringify(sidecar(dir))})[0]]: 'sha256' };\n`
+    + `const named = (x) => { try { const p = ArrayBuffer.isView(x) ? Buffer.from(x.buffer, x.byteOffset, x.byteLength)\n`
+    + `  : x !== null && typeof x === 'object' && x.href ? fileURLToPath(x) : typeof x === 'string' ? x : null;\n`
+    + `  return p !== null && ids(p).map((i) => files[i]).find(Boolean); } catch { return undefined; } };\n`
+    + `for (const [where, mod] of [['', fs], ['promises.', fs.promises]]) for (const k of Object.keys(mod)) {\n`
+    + `  const f = mod[k]; if (typeof f !== 'function' || /^[A-Z]/.test(k)) continue;\n`
+    + `  mod[k] = function (...a) { if (!globalThis.testAction) for (const x of a) { const n = named(x); if (n) append(log, n + ' ' + where + k + '\\n'); }\n`
+    + `    return f.apply(this, a); }; }\nsyncBuiltinESMExports();\n`);
+  return { href: pathToFileURL(preload).href, calls: () => readFileSync(log, 'utf8').trim().split('\n').sort() };
+};
 for (const [what, bytes, line, code, calls] of COUNTS) {
   test(`--verify reaches each file by path once, with openSync, for ${what} (exit ${code})`, within((dir) => {
-    const preload = join(dir, 'count.mjs'), log = join(dir, 'calls.log');
-    writeFileSync(log, '');
-    writeFileSync(preload, `import fs from 'node:fs';\nimport { fileURLToPath } from 'node:url';\nimport { syncBuiltinESMExports } from 'node:module';\n`
-      + `const append = fs.appendFileSync, lstat = fs.lstatSync, log = ${JSON.stringify(log)};\n`
-      + `const stat = fs.statSync, ids = (p) => [lstat, stat].map((f) => { const s = f(p, { throwIfNoEntry: false }); return s && s.dev + ':' + s.ino; });\n`
-      + `const files = { [ids(${JSON.stringify(pkg(dir))})[0]]: 'package', [ids(${JSON.stringify(sidecar(dir))})[0]]: 'sha256' };\n`
-      + `const named = (x) => { try { const p = ArrayBuffer.isView(x) ? Buffer.from(x.buffer, x.byteOffset, x.byteLength)\n`
-      + `  : x !== null && typeof x === 'object' && x.href ? fileURLToPath(x) : typeof x === 'string' ? x : null;\n`
-      + `  return p !== null && ids(p).map((i) => files[i]).find(Boolean); } catch { return undefined; } };\n`
-      + `for (const [where, mod] of [['', fs], ['promises.', fs.promises]]) for (const k of Object.keys(mod)) {\n`
-      + `  const f = mod[k]; if (typeof f !== 'function' || /^[A-Z]/.test(k)) continue;\n`
-      + `  mod[k] = function (...a) { for (const x of a) { const n = named(x); if (n) append(log, n + ' ' + where + k + '\\n'); }\n`
-      + `    return f.apply(this, a); }; }\nsyncBuiltinESMExports();\n`);
-    const r = run(dir, ['--verify'], ['--import', pathToFileURL(preload).href]);
+    const count = countPreload(dir);
+    const r = run(dir, ['--verify'], ['--import', count.href]);
     assert.equal(r.code, code, r.out);
-    assert.deepEqual(readFileSync(log, 'utf8').trim().split('\n').sort(), calls);
+    assert.deepEqual(count.calls(), calls);
   }, bytes, line));
+}
+
+// The same when a file changes while it is read (exit 2): the script must not
+// open either file again after it sees the change (review c.6971750432, N2).
+// The phase preload's own change is marked (globalThis.testAction) and not counted.
+const CHANGED_COUNTS = [
+  ['the package changed after the first block', pkg, 'first', "fs.appendFileSync(path, 'a');"],
+  ['the package changed after EOF', pkg, 'eof', "fs.appendFileSync(path, 'a');"],
+  ['the .sha256 changed after the first read', sidecar, 'first', `fs.writeFileSync(path, ${JSON.stringify(OTHER)});`],
+];
+for (const [what, at, phase, action] of CHANGED_COUNTS) {
+  test(`--verify reaches each file by path once, with openSync, for ${what} (exit 2)`, within((dir) => {
+    const count = countPreload(dir);
+    const r = phased(dir, at(dir), phase, action, ['--import', count.href]);
+    assert.equal(r.code, 2, r.out);
+    assert.match(r.out, CHANGED);
+    assert.deepEqual(count.calls(), at === pkg ? ['package openSync', 'sha256 openSync'] : ['sha256 openSync']);
+  }));
+}
+
+// A file that grows faster than it is read (two blocks added on every read)
+// is refused after a bounded number of reads: at most to the checked size and
+// one byte past it (review c.6971750432, N1), so it can never hold the script.
+for (const [what, at, size] of [['package', pkg, 1_000_000], ['.sha256', sidecar, 84]]) {
+  test(`--verify refuses a ${what} that keeps growing while it is read, in bounded reads (exit 2)`, within((dir) => {
+    const preload = join(dir, 'grow.mjs'), reads = join(dir, 'reads.txt');
+    writeFileSync(preload, "import fs from 'node:fs';\nimport { syncBuiltinESMExports } from 'node:module';\n"
+      + `const path = ${JSON.stringify(at(dir))}, { ino } = fs.lstatSync(path), f = fs.fstatSync, rs = fs.readSync, w = fs.writeFileSync;\n`
+      + "let n = 0; process.on('exit', () => w(" + JSON.stringify(reads) + ", String(n)));\n"
+      + "fs.readSync = (fd, ...a) => { const r = rs(fd, ...a); if (f(fd).ino === ino) { n++; fs.appendFileSync(path, Buffer.alloc(131072, 'a')); } return r; };\n"
+      + 'syncBuiltinESMExports();\n');
+    const r = run(dir, ['--verify'], ['--import', pathToFileURL(preload).href]);
+    assert.equal(r.code, 2, r.out);
+    assert.match(r.out, CHANGED);
+    const count = Number(readFileSync(reads, 'utf8'));
+    assert.ok(count >= 1 && count <= Math.ceil(size / 65536) + 1, `${count} reads`);
+  }));
 }
 
 // Every .sha256 that is not exactly `<64 lowercase hex>  Ductura-macOS.dmg\n`.
