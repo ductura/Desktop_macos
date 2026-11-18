@@ -32,8 +32,8 @@ jobs:
             dist/Ductura-macOS.dmg.sha256
           if-no-files-found: error
 
-  # Node checks on Linux: ci-ok itself (DAN-885) and the contract client
-  # (DAN-959). build-test stays as it is.
+  # Node checks on Linux: ci-ok itself (DAN-885), the contract client
+  # (DAN-959) and the package SHA-256 script (DAN-1075).
   ci-ok-test:
     runs-on: ubuntu-latest
     timeout-minutes: 5

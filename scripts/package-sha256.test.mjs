@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { closeSync, constants, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -31,9 +31,10 @@ const sidecar = (dir) => join(dir, 'dist', `${NAME}.sha256`);
 // Buffer.equals, not deepEqual: a failing deepEqual on 1 MB builds a huge diff.
 const unchanged = (path) => assert.ok(readFileSync(path).equals(BYTES), `${path} changed`);
 // Writing leaves only the package and its .sha256: no other file anywhere.
+const distPair = (dir) => assert.deepEqual(readdirSync(join(dir, 'dist')).sort(), [NAME, `${NAME}.sha256`]);
 const onlyPair = (dir) => {
   assert.deepEqual(readdirSync(dir), ['dist']);
-  assert.deepEqual(readdirSync(join(dir, 'dist')).sort(), [NAME, `${NAME}.sha256`]);
+  distPair(dir);
 };
 function within(fn) {
   return () => { const dir = folder(); try { fn(dir); } finally { rmSync(dir, { recursive: true, force: true }); } };
@@ -204,7 +205,9 @@ test('writing over a .sha256 hard-linked to another file leaves that file as it 
   linkSync(other, join(dir, 'third.txt'));
   assert.equal(run(dir).code, 0);
   assert.equal(readFileSync(other, 'utf8'), `${'0'.repeat(64)}  ${NAME}\r\nkeep`);
+  assert.equal(lstatSync(other).nlink, 2);
   isPlainSidecar(dir);
+  distPair(dir);
 }));
 
 for (const [what, target] of [['the package', (dir) => join(dir, 'dist', NAME)], ['a file outside dist/', (dir) => join(dir, 'outside.txt')]]) {
@@ -215,6 +218,7 @@ for (const [what, target] of [['the package', (dir) => join(dir, 'dist', NAME)],
     unchanged(join(dir, 'dist', NAME));
     assert.equal(readFileSync(join(dir, 'outside.txt'), 'utf8'), 'keep');
     isPlainSidecar(dir);
+    distPair(dir);
   }));
 }
 
@@ -249,11 +253,25 @@ test('with a free temporary name writing succeeds and leaves only the pair', wit
   onlyPair(dir);
 }));
 
+// After the refusal the entry at the temporary path is still exactly what it was.
 const TEMP_TAKEN = [
-  ['a regular file', (dir) => writeFileSync(temp(dir), 'keep'), (dir) => assert.equal(readFileSync(temp(dir), 'utf8'), 'keep')],
-  ['a hard link to the package', (dir) => linkSync(join(dir, 'dist', NAME), temp(dir)), () => {}],
-  ['a symbolic link to the package', (dir) => symlinkSync(join(dir, 'dist', NAME), temp(dir)), () => {}],
-  ['a dangling symbolic link', (dir) => symlinkSync(join(dir, 'nowhere.txt'), temp(dir)), (dir) => assert.equal(existsSync(join(dir, 'nowhere.txt')), false)],
+  ['a regular file', (dir) => writeFileSync(temp(dir), 'keep'), (dir) => {
+    assert.ok(lstatSync(temp(dir)).isFile());
+    assert.equal(readFileSync(temp(dir), 'utf8'), 'keep');
+  }],
+  ['a hard link to the package', (dir) => linkSync(join(dir, 'dist', NAME), temp(dir)), (dir) => {
+    const [t, p] = [lstatSync(temp(dir)), lstatSync(join(dir, 'dist', NAME))];
+    assert.ok(t.isFile() && t.ino === p.ino && p.nlink === 2);
+  }],
+  ['a symbolic link to the package', (dir) => symlinkSync(join(dir, 'dist', NAME), temp(dir)), (dir) => {
+    assert.ok(lstatSync(temp(dir)).isSymbolicLink());
+    assert.equal(readlinkSync(temp(dir)), join(dir, 'dist', NAME));
+  }],
+  ['a dangling symbolic link', (dir) => symlinkSync(join(dir, 'nowhere.txt'), temp(dir)), (dir) => {
+    assert.ok(lstatSync(temp(dir)).isSymbolicLink());
+    assert.equal(readlinkSync(temp(dir)), join(dir, 'nowhere.txt'));
+    assert.equal(existsSync(join(dir, 'nowhere.txt')), false);
+  }],
 ];
 for (const [what, make, still] of TEMP_TAKEN) {
   test(`writing exits 2 when the temporary path is already ${what}, changing nothing`, within((dir) => {
@@ -265,6 +283,7 @@ for (const [what, make, still] of TEMP_TAKEN) {
     unchanged(join(dir, 'dist', NAME));
     assert.equal(readFileSync(sidecar(dir), 'utf8'), `${'0'.repeat(64)}  ${NAME}\n`);
     still(dir);
+    assert.deepEqual(readdirSync(join(dir, 'dist')).sort(), [`.${NAME}.sha256.${'ab'.repeat(8)}.tmp`, NAME, `${NAME}.sha256`]);
   }));
 }
 
