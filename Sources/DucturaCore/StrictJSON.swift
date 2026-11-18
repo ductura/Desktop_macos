@@ -111,7 +111,11 @@ enum StrictJSON {
             while let b = peek {
                 index += 1
                 switch b {
-                case UInt8(ascii: "\""): flush(); return String(scalars)
+                case UInt8(ascii: "\""):
+                    flush()
+                    // I-JSON §2.1: no noncharacter (U+FDD0...U+FDEF, U+xFFFE, U+xFFFF), raw or escaped.
+                    let noncharacter = scalars.contains { (0xFDD0...0xFDEF).contains($0.value) || $0.value & 0xFFFE == 0xFFFE }
+                    return noncharacter ? nil : String(scalars)
                 case 0x00..<0x20: return nil
                 case UInt8(ascii: "\\"):
                     guard let e = peek else { return nil }

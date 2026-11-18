@@ -43,6 +43,12 @@ final class StrictJSONTests: XCTestCase {
             #"["\x"]"#, #"["\'"]"#, #"["\u00G0"]"#, #"["\u12"]"#, #"["\uD800"]"#, #"["\uDC00"]"#, #"["\uDBFF\u0041"]"#,
             #"["\uD800\uD800"]"#, #"["\"]"#, #"["\U00e9"]"#,
         ] { XCTAssertFalse(ok(text), text) }
+        for code: UInt32 in [0xFDD0, 0xFDEF, 0xFFFE, 0xFFFF, 0x1FFFE, 0x1FFFF, 0x10FFFE, 0x10FFFF] {
+            let raw = String(Unicode.Scalar(code)!)
+            let escaped = String(raw.utf16.map { String(format: "\\u%04X", $0) }.joined())
+            for text in ["[\"\(raw)\"]", "{\"\(raw)\":1}", "[\"\(escaped)\"]", "{\"a\(escaped)\":1}"] { XCTAssertFalse(ok(text), show(text)) }
+        }
+        for code: UInt32 in [0xFDCF, 0xFDF0, 0xFFFD, 0x1FFFD, 0x10000] { XCTAssertTrue(ok("[\"\(Unicode.Scalar(code)!)\"]"), "\(code)") }
         for text in [#"["\uD83D\uDE00"]"#, #"["\u0000"]"#, #"["\/"]"#, #"["\u00e9\u00E9"]"#, "[\"\u{7F}\"]", "[\"\u{2028}\"]", #"["\"\\\b\f\n\r\t"]"#] {
             XCTAssertTrue(ok(text), text)
         }
