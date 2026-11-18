@@ -36,8 +36,14 @@ function use(path, check, read, settle = () => {}) {
     if (!before.isFile()) throw new Error(`${path} is not a regular file`);
     const size = Number(before.size);
     check(size);
-    const bytes = read(fd, size + 1);
+    let bytes, failure;
+    try {
+      bytes = read(fd, size + 1);
+    } catch (error) {
+      failure = error; // reported after the second fstat, which is always taken
+    }
     const after = fstatSync(fd, { bigint: true });
+    if (failure) throw failure;
     settle(bytes);
     if (bytes !== size || ['size', 'mtimeNs', 'ctimeNs', 'ino', 'dev'].some((key) => after[key] !== before[key])) {
       throw new Error(`${path} changed while being read`);

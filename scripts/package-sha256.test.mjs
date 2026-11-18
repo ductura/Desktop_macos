@@ -174,6 +174,18 @@ const phased = (dir, path, phase, action) => {
   return r;
 };
 
+// A read that fails (EIO from the first read) still gets the second fstat of
+// the same descriptor before the error is reported (exit 2).
+for (const [file, at] of [['package', pkg], ['.sha256', sidecar]]) {
+  test(`--verify takes the second fstat of the ${file} when a read fails (exit 2)`, within((dir) => {
+    const href = phasePreload(dir, at(dir), 'first', "throw Object.assign(new Error('EIO fake'), { code: 'EIO' });");
+    const r = run(dir, ['--verify'], ['--import', href]);
+    assert.equal(r.code, 2, r.out);
+    assert.match(r.out, /EIO fake/);
+    assert.equal(readFileSync(join(dir, 'fstats.txt'), 'utf8'), '2', 'fstat calls on the target');
+  }));
+}
+
 // Reads come back short (7 bytes at most each): the script still reads both
 // files whole and exits 0, so a single read that assumes a full block fails.
 test('--verify reads to EOF when every read returns at most 7 bytes (exit 0)', within((dir) => {
@@ -223,6 +235,7 @@ test('--verify exits 2 when the package is emptied after the check', within((dir
 const SIDECAR_CHANGES = [
   ['grows after the check', 'check', `fs.appendFileSync(path, ${JSON.stringify(GOOD)});`, GOOD + GOOD],
   ['is emptied after the check', 'check', 'fs.truncateSync(path, 0);', ''],
+  ['is cut to 40 bytes after the check', 'check', 'fs.truncateSync(path, 40);', GOOD.slice(0, 40)],
   ['grows after the first read', 'first', `fs.appendFileSync(path, ${JSON.stringify(GOOD)});`, GOOD + GOOD],
   ['is rewritten in place after the first read', 'first', `fs.writeFileSync(path, ${JSON.stringify(OTHER)});`, OTHER],
   ['is rewritten with its mtime put back after the first read', 'first',
