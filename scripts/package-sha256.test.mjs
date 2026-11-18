@@ -283,6 +283,11 @@ const FAULTS = [
   ['a failing close alone after a full write (descriptor left open)', `${TEMP}const c = fs.closeSync;\n`
     + `fs.closeSync = (fd) => { if (fd === tempFd && full()) throw ${fake('EIO')}; c(fd); };`, /EIO/, true],
   ['a failing rename alone', `fs.renameSync = () => { throw ${fake('EXDEV')}; };`, /EXDEV/, true],
+  ['a failing write and clean-up', `fs.writeSync = () => { throw ${fake('ENOSPC')}; };\n`
+    + `fs.unlinkSync = () => { throw ${fake('EACCES')}; };`, /ENOSPC/, false],
+  ['a failing close after a full write and clean-up', `${TEMP}const c = fs.closeSync;\n`
+    + `fs.closeSync = (fd) => { c(fd); if (fd === tempFd && full()) throw ${fake('EIO')}; };\n`
+    + `fs.unlinkSync = () => { throw ${fake('EACCES')}; };`, /EIO/, false],
   ['a short write', 'const w = fs.writeSync; fs.writeSync = (fd, s, p) => w(fd, String(s).slice(0, 10), p);', /short write/, true],
   ['a failing write', "fs.writeSync = () => { throw Object.assign(new Error('ENOSPC fake'), { code: 'ENOSPC' }); };", /ENOSPC/, true],
   ['a failing write and close', "let failed = false; const c = fs.closeSync;\n"
