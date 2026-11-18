@@ -4,20 +4,20 @@
 // The file is one line in the `shasum -a 256` form, so `shasum -a 256 -c` also
 // works in the unpacked artifact. Paths are relative to the working folder
 // (the repository root in CI). Every error other than a different hash exits 2.
-import { createHash } from 'node:crypto';
-import { closeSync, constants, createReadStream, fstatSync, ftruncateSync, openSync, readFileSync, writeSync } from 'node:fs';
+import { createHash, randomBytes } from 'node:crypto';
+import { closeSync, constants, createReadStream, fstatSync, openSync, readFileSync, renameSync, unlinkSync, writeSync } from 'node:fs';
 
 const NAME = 'Ductura-macOS.dmg';
 const PACKAGE = `dist/${NAME}`;
 const SIDECAR = `${PACKAGE}.sha256`;
 const LINE = /^([0-9a-f]{64}) {2}Ductura-macOS\.dmg\n$/;
 const LINE_BYTES = 64 + 2 + NAME.length + 1;
-const { O_RDONLY, O_WRONLY, O_CREAT, O_NOFOLLOW, O_NONBLOCK } = constants;
+const { O_RDONLY, O_WRONLY, O_CREAT, O_EXCL, O_NOFOLLOW, O_NONBLOCK } = constants;
 
-// Opens a path once, never through a symbolic link (O_NOFOLLOW) and never
-// waiting on a FIFO (O_NONBLOCK). The descriptor must be a regular file and
-// `check` may refuse it; everything after goes through that descriptor, so
-// the path cannot be swapped between the check and the use. No O_TRUNC.
+// Opens a path for reading once, never through a symbolic link (O_NOFOLLOW)
+// and never waiting on a FIFO (O_NONBLOCK). The descriptor must be a regular
+// file and `check` may refuse it; everything after goes through that
+// descriptor, so the path cannot be swapped between the check and the use.
 function use(path, flags, check, work) {
   let fd;
   try {
@@ -65,18 +65,24 @@ function recordedHash() {
   });
 }
 
-// Empties and writes the .sha256 only when it has no other name: a hard link
-// could be the package or any other file.
+// Never writes through an existing path: the line goes into a new file with a
+// random name in dist/, opened wx (O_CREAT|O_EXCL, so any file or link already
+// there is refused), and is renamed over the .sha256. A link at .sha256 is
+// replaced, not followed, so what it named stays as it was.
 function writeHash(sha) {
-  const oneName = (stat) => { if (stat.nlink !== 1) throw new Error(`${SIDECAR} has another name`); };
-  use(SIDECAR, O_WRONLY | O_CREAT, oneName, (fd, close) => {
+  const temp = `dist/.${NAME}.sha256.${randomBytes(8).toString('hex')}.tmp`;
+  const fd = openSync(temp, O_WRONLY | O_CREAT | O_EXCL);
+  try {
     try {
-      ftruncateSync(fd, 0);
-      if (writeSync(fd, `${sha}  ${NAME}\n`, 0) !== LINE_BYTES) throw new Error(`${SIDECAR}: short write`);
+      if (writeSync(fd, `${sha}  ${NAME}\n`, 0) !== LINE_BYTES) throw new Error(`${temp}: short write`);
     } finally {
-      close();
+      closeSync(fd);
     }
-  });
+    renameSync(temp, SIDECAR);
+  } catch (error) {
+    unlinkSync(temp);
+    throw error;
+  }
 }
 
 async function main(args) {

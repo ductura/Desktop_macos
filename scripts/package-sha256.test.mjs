@@ -3,10 +3,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { closeSync, constants, existsSync, linkSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { basename, dirname, join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parse } from 'yaml';
 
 const SCRIPT = fileURLToPath(new URL('package-sha256.mjs', import.meta.url));
@@ -145,26 +145,38 @@ test('--verify refuses a .sha256 that is a symbolic link to a good line (exit 2)
   assert.equal(run(dir, '--verify').code, 2);
 }));
 
+// Checks with lstat before reading, so a regression that leaves a FIFO or a
+// link at .sha256 fails here instead of blocking the test.
+const isPlainSidecar = (dir) => {
+  const st = lstatSync(sidecar(dir));
+  assert.ok(st.isFile() && st.nlink === 1, '.sha256 is a regular file with one name');
+  assert.equal(readFileSync(sidecar(dir), 'utf8'), `${SHA}  ${NAME}\n`);
+};
+
 // A FIFO in place of either file, with no other end, with a reader or with a
-// writer that the test holds open: exit 2 in both modes, never a wait (the
-// process has a 20 s limit). The script is the package's reader itself.
+// writer that the test holds open: never a wait (the process has a 20 s
+// limit). --verify refuses it (2); writing replaces a .sha256 FIFO by rename
+// (0) and refuses a package FIFO (2). The script is the package's reader.
 const FIFO_PEERS = [['no other end', null], ['a reader', constants.O_RDONLY | constants.O_NONBLOCK], ['a writer', constants.O_RDWR]];
 for (const [what, at] of [['.sha256', sidecar], ['package', (dir) => join(dir, 'dist', NAME)]]) {
   for (const [peer, flags] of FIFO_PEERS) {
     if (what === 'package' && peer === 'a reader') continue;
     for (const args of [[], ['--verify']]) {
-      test(`a ${what} FIFO with ${peer} exits 2 without waiting: ${args.join(' ') || 'write'}`, within((dir) => {
+      const replaced = what === '.sha256' && args.length === 0;
+      test(`a ${what} FIFO with ${peer} exits ${replaced ? 0 : 2} without waiting: ${args.join(' ') || 'write'}`, within((dir) => {
         if (what === 'package') writeFileSync(sidecar(dir), `${SHA}  ${NAME}\n`);
         rmSync(at(dir), { force: true });
         assert.equal(spawnSync('mkfifo', [at(dir)]).status, 0);
         const held = flags === null ? null : openSync(at(dir), flags);
         try {
           const r = run(dir, ...args);
-          assert.equal(r.code, 2, r.out);
-          // Only a .sha256 FIFO with no reader fails to open for writing; every
-          // other one opens and is then refused as not a regular file.
-          const noReader = what === '.sha256' && flags === null && args.length === 0;
-          assert.match(r.out, noReader ? /ENXIO/ : /is not a regular file/);
+          assert.equal(r.code, replaced ? 0 : 2, r.out);
+          if (replaced) {
+            isPlainSidecar(dir); // lstat first: reading a FIFO left in place would block
+            onlyPair(dir);
+          } else {
+            assert.match(r.out, /is not a regular file/);
+          }
         } finally {
           if (held !== null) closeSync(held);
         }
@@ -173,45 +185,88 @@ for (const [what, at] of [['.sha256', sidecar], ['package', (dir) => join(dir, '
   }
 }
 
-// A .sha256 that is a second name of another file: writing would change that file.
-test('writing into a .sha256 hard-linked to the package exits 2 and leaves the package as it was', within((dir) => {
+// Writing never goes through an existing .sha256 path: the line goes into a
+// new temporary file in dist/ (opened wx) that is then renamed over it, so a
+// link at .sha256 is replaced and whatever it named stays as it was.
+test('writing over a .sha256 hard-linked to the package leaves the package as it was', within((dir) => {
   linkSync(join(dir, 'dist', NAME), sidecar(dir));
-  assert.equal(run(dir).code, 2);
+  assert.equal(run(dir).code, 0);
   unchanged(join(dir, 'dist', NAME));
+  assert.equal(lstatSync(join(dir, 'dist', NAME)).nlink, 1);
+  isPlainSidecar(dir);
+  onlyPair(dir);
 }));
 
-test('writing into a .sha256 with two other names exits 2 and leaves that file as it was', within((dir) => {
+test('writing over a .sha256 hard-linked to another file leaves that file as it was', within((dir) => {
   const other = join(dir, 'other.txt');
   writeFileSync(other, `${'0'.repeat(64)}  ${NAME}\r\nkeep`);
   linkSync(other, sidecar(dir));
   linkSync(other, join(dir, 'third.txt'));
-  assert.equal(run(dir).code, 2);
-  assert.equal(readFileSync(other, 'utf8'), `${'0'.repeat(64)}  ${NAME}\r\nkeep`);
-}));
-
-test('writing succeeds once the other name of a .sha256 is gone', within((dir) => {
-  const other = join(dir, 'other.txt');
-  writeFileSync(other, `${'0'.repeat(64)}  ${NAME}\r\nkeep`);
-  linkSync(other, sidecar(dir));
-  unlinkSync(other);
   assert.equal(run(dir).code, 0);
-  assert.equal(readFileSync(sidecar(dir), 'utf8'), `${SHA}  ${NAME}\n`);
+  assert.equal(readFileSync(other, 'utf8'), `${'0'.repeat(64)}  ${NAME}\r\nkeep`);
+  isPlainSidecar(dir);
 }));
 
-test('writing does not create the target of a dangling .sha256 link (exit 2)', within((dir) => {
+for (const [what, target] of [['the package', (dir) => join(dir, 'dist', NAME)], ['a file outside dist/', (dir) => join(dir, 'outside.txt')]]) {
+  test(`writing over a .sha256 symbolic link to ${what} leaves it as it was`, within((dir) => {
+    writeFileSync(join(dir, 'outside.txt'), 'keep');
+    symlinkSync(target(dir), sidecar(dir));
+    assert.equal(run(dir).code, 0);
+    unchanged(join(dir, 'dist', NAME));
+    assert.equal(readFileSync(join(dir, 'outside.txt'), 'utf8'), 'keep');
+    isPlainSidecar(dir);
+  }));
+}
+
+test('writing over a dangling .sha256 link does not create its target', within((dir) => {
   const nowhere = join(dir, 'nowhere.txt');
   symlinkSync(nowhere, sidecar(dir));
-  assert.equal(run(dir).code, 2);
+  assert.equal(run(dir).code, 0);
   assert.equal(existsSync(nowhere), false);
+  isPlainSidecar(dir);
+  onlyPair(dir);
 }));
 
-test('writing does not follow a .sha256 symbolic link (exit 2, target unchanged)', within((dir) => {
-  writeFileSync(join(dir, 'outside.txt'), 'keep');
-  symlinkSync(join(dir, 'outside.txt'), sidecar(dir));
-  assert.equal(run(dir).code, 2);
-  assert.equal(readFileSync(join(dir, 'outside.txt'), 'utf8'), 'keep');
-  unchanged(join(dir, 'dist', NAME));
+// The temporary name is random; a preloaded module fixes randomBytes so the
+// test knows it. With that name free, writing works and leaves no temp file.
+const FIXED = `import crypto from 'node:crypto';\nimport { syncBuiltinESMExports } from 'node:module';\n`
+  + `crypto.randomBytes = (n) => Buffer.alloc(n, 0xab);\nsyncBuiltinESMExports();\n`;
+const runFixed = (dir, ...args) => {
+  const preload = join(dirname(dir), `${basename(dir)}-fixed.mjs`);
+  writeFileSync(preload, FIXED);
+  try {
+    const r = spawnSync(process.execPath, ['--import', pathToFileURL(preload).href, SCRIPT, ...args], { cwd: dir, encoding: 'utf8', timeout: 20_000 });
+    return { code: r.status, out: r.stdout + r.stderr };
+  } finally {
+    rmSync(preload, { force: true });
+  }
+};
+const temp = (dir) => join(dir, 'dist', `.${NAME}.sha256.${'ab'.repeat(8)}.tmp`);
+
+test('with a free temporary name writing succeeds and leaves only the pair', within((dir) => {
+  assert.equal(runFixed(dir).code, 0);
+  isPlainSidecar(dir);
+  onlyPair(dir);
 }));
+
+const TEMP_TAKEN = [
+  ['a regular file', (dir) => writeFileSync(temp(dir), 'keep'), (dir) => assert.equal(readFileSync(temp(dir), 'utf8'), 'keep')],
+  ['a hard link to the package', (dir) => linkSync(join(dir, 'dist', NAME), temp(dir)), () => {}],
+  ['a symbolic link to the package', (dir) => symlinkSync(join(dir, 'dist', NAME), temp(dir)), () => {}],
+  ['a dangling symbolic link', (dir) => symlinkSync(join(dir, 'nowhere.txt'), temp(dir)), (dir) => assert.equal(existsSync(join(dir, 'nowhere.txt')), false)],
+];
+for (const [what, make, still] of TEMP_TAKEN) {
+  test(`writing exits 2 when the temporary path is already ${what}, changing nothing`, within((dir) => {
+    writeFileSync(sidecar(dir), `${'0'.repeat(64)}  ${NAME}\n`);
+    make(dir);
+    const r = runFixed(dir);
+    assert.equal(r.code, 2, r.out);
+    assert.match(r.out, /EEXIST/);
+    unchanged(join(dir, 'dist', NAME));
+    assert.equal(readFileSync(sidecar(dir), 'utf8'), `${'0'.repeat(64)}  ${NAME}\n`);
+    still(dir);
+  }));
+}
 
 test('--verify without a .sha256 file exits 2', within((dir) => {
   assert.equal(run(dir, '--verify').code, 2);
@@ -221,6 +276,7 @@ for (const args of [[], ['--verify']]) {
   test(`a .sha256 that is a folder exits 2, not 1: ${args.join(' ') || 'write'}`, within((dir) => {
     mkdirSync(sidecar(dir));
     assert.equal(run(dir, ...args).code, 2);
+    onlyPair(dir);
   }));
 }
 
@@ -271,13 +327,13 @@ function ciProblems(wf) {
   const hashSteps = steps.filter((s) => String(s?.run ?? '').includes('package-sha256')).length;
   if (hashSteps !== 2) problems.push(`hash steps: ${hashSteps}`);
   const verify = at((s) => s?.run === VERIFY, 'verify');
-  const upload = at((s) => /^actions\/upload-artifact@/.test(s?.uses ?? ''), 'upload');
-  // No other job may upload an artifact of the same name over the pair.
+  // Any upload-artifact action (also /merge), in build-test exactly once.
+  const uploads = (s) => /^actions\/upload-artifact[/@]/.test(s?.uses ?? '');
+  const upload = at(uploads, 'upload');
+  // No other job uploads at all, so none can replace the pair, whatever the
+  // spelling of the name (trailing space, expression).
   for (const [job, j] of Object.entries(wf?.jobs ?? {})) {
-    if (job === 'build-test') continue;
-    for (const s of j?.steps ?? []) {
-      if (/^actions\/upload-artifact@/.test(s?.uses ?? '') && s?.with?.name === 'Ductura-macOS') problems.push(`${job} uploads Ductura-macOS`);
-    }
+    if (job !== 'build-test' && (j?.steps ?? []).some(uploads)) problems.push(`${job} uploads an artifact`);
   }
   if (!(node < build && write === build + 1 && functional > write && verify > functional && upload === verify + 1)) {
     problems.push('order');
@@ -322,6 +378,7 @@ test('ci.yml writes, verifies and uploads the hash with the package', () => {
 const steps = (wf) => wf.jobs['build-test'].steps;
 const findRun = (wf, run) => steps(wf).findIndex((s) => s.run === run);
 const setupNode = (wf) => steps(wf).find((s) => String(s.uses).startsWith('actions/setup-node@'));
+const wf0 = () => ci();
 const MUTATIONS = [
   ['upload without .sha256', 'artifact paths', (wf) => { steps(wf).at(-1).with.path = `dist/${NAME}`; }],
   ['upload with a glob', 'artifact paths', (wf) => { steps(wf).at(-1).with.path = 'dist/*'; }],
@@ -348,9 +405,13 @@ const MUTATIONS = [
   ['setup-node on Node 18', 'setup-node version', (wf) => { setupNode(wf).with['node-version'] = 18; }],
   ['setup-node may be skipped', 'setup-node key if', (wf) => { setupNode(wf).if = 'false'; }],
   ['NODE_OPTIONS on the job', 'build-test env', (wf) => { wf.jobs['build-test'].env = { NODE_OPTIONS: '--import=x' }; }],
-  ['another job uploads Ductura-macOS', 'late uploads Ductura-macOS', (wf) => {
-    wf.jobs.late = { 'runs-on': 'ubuntu-latest', needs: 'build-test', steps: [
-      { uses: steps(wf).at(-1).uses, with: { name: 'Ductura-macOS', path: 'x', overwrite: true } }] };
+  ...[['the same name', steps(wf0()).at(-1).uses, 'Ductura-macOS'], ['a name with a trailing space', steps(wf0()).at(-1).uses, 'Ductura-macOS '],
+    ['an expression for the name', steps(wf0()).at(-1).uses, "${{ 'Ductura-macOS' }}"], ['the merge sub-action', `actions/upload-artifact/merge@${'0'.repeat(40)}`, 'Ductura-macOS'],
+  ].map(([what, uses, name]) => [`another job uploads with ${what}`, 'late uploads an artifact', (wf) => {
+    wf.jobs.late = { 'runs-on': 'ubuntu-latest', needs: 'build-test', steps: [{ uses, with: { name, path: 'x', overwrite: true } }] };
+  }]),
+  ['a second upload in build-test', 'upload: 2 steps', (wf) => {
+    steps(wf).push({ uses: `actions/upload-artifact/merge@${'0'.repeat(40)}`, with: { name: 'Ductura-macOS' } });
   }],
   ['env on ci-ok-test', 'ci-ok-test job key env', (wf) => { wf.jobs['ci-ok-test'].env = { NODE_OPTIONS: '--import=x' }; }],
   ['defaults on ci-ok-test', 'ci-ok-test job key defaults', (wf) => { wf.jobs['ci-ok-test'].defaults = { run: { shell: 'true {0}' } }; }],
