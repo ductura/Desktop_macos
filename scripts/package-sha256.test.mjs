@@ -266,8 +266,23 @@ test('the temporary name is not fixed: a file at the test name stays and writing
 
 // A failing step exits 2 with its own error, leaves the old .sha256 as it was
 // and removes the temporary file; a failing clean-up does not hide the error.
+// Each step of the write (open, write, close, rename) also fails alone, with
+// every other step working: TEMP marks the temporary descriptor and counts the
+// bytes written to it, so a close fault fires only after a full write.
 const OLD = `${'0'.repeat(64)}  ${NAME}\n`;
+const fake = (code) => `Object.assign(new Error('${code} fake'), { code: '${code}' })`;
+const TEMP = "let tempFd = -1, wrote = 0; const o = fs.openSync, w = fs.writeSync;\n"
+  + "fs.openSync = (p, ...a) => { const fd = o(p, ...a); if (String(p).endsWith('.tmp')) tempFd = fd; return fd; };\n"
+  + "fs.writeSync = (fd, ...a) => { const n = w(fd, ...a); if (fd === tempFd) wrote += n; return n; };\n"
+  + `const full = () => wrote === ${64 + 2 + NAME.length + 1};\n`;
 const FAULTS = [
+  ['a failing open of the temporary file alone', "const o = fs.openSync;\n"
+    + `fs.openSync = (p, ...a) => { if (String(p).endsWith('.tmp')) throw ${fake('EACCES')}; return o(p, ...a); };`, /EACCES/, true],
+  ['a failing close alone after a full write (descriptor closed)', `${TEMP}const c = fs.closeSync;\n`
+    + `fs.closeSync = (fd) => { c(fd); if (fd === tempFd && full()) throw ${fake('EIO')}; };`, /EIO/, true],
+  ['a failing close alone after a full write (descriptor left open)', `${TEMP}const c = fs.closeSync;\n`
+    + `fs.closeSync = (fd) => { if (fd === tempFd && full()) throw ${fake('EIO')}; c(fd); };`, /EIO/, true],
+  ['a failing rename alone', `fs.renameSync = () => { throw ${fake('EXDEV')}; };`, /EXDEV/, true],
   ['a short write', 'const w = fs.writeSync; fs.writeSync = (fd, s, p) => w(fd, String(s).slice(0, 10), p);', /short write/, true],
   ['a failing write', "fs.writeSync = () => { throw Object.assign(new Error('ENOSPC fake'), { code: 'ENOSPC' }); };", /ENOSPC/, true],
   ['a failing write and close', "let failed = false; const c = fs.closeSync;\n"
