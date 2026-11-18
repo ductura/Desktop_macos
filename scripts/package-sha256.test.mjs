@@ -139,14 +139,15 @@ const phasePreload = (dir, path, phase, action) => {
 const countPreload = (dir) => {
   const preload = join(dir, 'count.mjs'), log = join(dir, 'calls.log');
   writeFileSync(log, '');
-  writeFileSync(preload, `import fs from 'node:fs';\nimport { resolve } from 'node:path';\nimport { fileURLToPath } from 'node:url';\nimport { syncBuiltinESMExports } from 'node:module';\n`
+  writeFileSync(preload, `import fs from 'node:fs';\nimport { basename, dirname, resolve } from 'node:path';\nimport { fileURLToPath } from 'node:url';\nimport { syncBuiltinESMExports } from 'node:module';\n`
     + `const append = fs.appendFileSync, lstat = fs.lstatSync, log = ${JSON.stringify(log)};\n`
-    + `const stat = fs.statSync, ids = (p) => [lstat, stat].map((f) => { const s = f(p, { throwIfNoEntry: false }); return s && s.dev + ':' + s.ino; });\n`
+    + `const stat = fs.statSync, ids = (p) => [lstat, stat].map((f) => { try { const s = f(p, { throwIfNoEntry: false }); return s && s.dev + ':' + s.ino; } catch { return undefined; } });\n`
+    + `const where = (p) => { try { return 'missing:' + resolve(fs.realpathSync(dirname(resolve(String(p)))), basename(String(p))); } catch { return 'missing:' + resolve(String(p)); } };\n`
     + `const files = {}; for (const [p, name] of [[${JSON.stringify(pkg(dir))}, 'package'], [${JSON.stringify(sidecar(dir))}, 'sha256']]) {\n`
-    + `  const [id] = ids(p); files[id || 'missing:' + resolve(p)] = name; }\n`
+    + `  const [id] = ids(p); files[id || where(p)] = name; }\n`
     + `const named = (x) => { try { const p = ArrayBuffer.isView(x) ? Buffer.from(x.buffer, x.byteOffset, x.byteLength)\n`
     + `  : x !== null && typeof x === 'object' && x.href ? fileURLToPath(x) : typeof x === 'string' ? x : null;\n`
-    + `  return p !== null && ([...ids(p), 'missing:' + resolve(String(p))].map((i) => files[i]).find(Boolean)); } catch { return undefined; } };\n`
+    + `  return p !== null && ([...ids(p), where(p)].map((i) => files[i]).find(Boolean)); } catch { return undefined; } };\n`
     + `for (const [where, mod] of [['', fs], ['promises.', fs.promises]]) for (const k of Object.keys(mod)) {\n`
     + `  const f = mod[k]; if (typeof f !== 'function' || /^[A-Z]/.test(k)) continue;\n`
     + `  mod[k] = function (...a) { if (!globalThis.testAction) for (const x of a) { const n = named(x); if (n) append(log, n + ' ' + where + k + '\\n'); }\n`
@@ -262,11 +263,13 @@ const COUNTS = [
   ['a .sha256 that is a symbolic link', (dir) => link(sidecar(dir)), ['--verify'], 2, ['sha256 openSync']],
   ['a missing package', (dir) => rmSync(pkg(dir)), ['--verify'], 2, BOTH],
   ['a missing .sha256', (dir) => rmSync(sidecar(dir)), ['--verify'], 2, ['sha256 openSync']],
+  ['a dist/ that is a file (ENOTDIR)', (dir) => { rmSync(join(dir, 'dist'), { recursive: true }); writeFileSync(join(dir, 'dist'), 'x'); },
+    ['--verify'], 2, ['sha256 openSync']],
   ...[['--Verify'], [], ['--verify', 'extra'], ['--verify', '--verify'], ['']].map((args) => [`the arguments ${JSON.stringify(args)}`, () => {}, args, 2, []]),
 ];
 for (const [what, setup, args, code, calls] of COUNTS) {
   test(`--verify reaches each file by path at most once, with openSync, for ${what} (exit ${code})`, within((dir) => {
-    setup(dir); // before the preload, which registers what is at each path (or the path, when nothing is)
+    setup(dir); // before the preload, which registers what is at each path (or, when nothing is, the path under its folder's real path)
     const count = countPreload(dir);
     const r = run(dir, args, ['--import', count.href]);
     assert.equal(r.code, code, r.out);
