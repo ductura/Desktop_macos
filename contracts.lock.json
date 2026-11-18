@@ -1,6 +1,6 @@
 {
   "version": "2.7.0",
-  "url": "https://github.com/ductura/server/releases/download/contracts-v2.7.0/ductura-contracts-2.7.0.tgz",
+  "url": "https://github.com/ductura/Institution_server/releases/download/contracts-v2.7.0/ductura-contracts-2.7.0.tgz",
   "sha256": "98d33ab2bd3319415a70b3252053588f3406a65a8c532fd903b0cd1348a91fa0",
   "operations": ["platform.health.get"]
 }

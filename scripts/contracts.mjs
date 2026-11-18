@@ -22,7 +22,7 @@ export function parseLock(lock) {
   for (const k of keys) if (!own(lock, k)) fail(`lock: missing ${k}`);
   const { version, url, sha256, operations } = lock;
   if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version)) fail('lock: bad version');
-  const want = `/ductura/server/releases/download/contracts-v${version}/ductura-contracts-${version}.tgz`;
+  const want = `/ductura/Institution_server/releases/download/contracts-v${version}/ductura-contracts-${version}.tgz`;
   if (url !== `https://github.com${want}`) fail('lock: url is not the release tarball of version');
   if (!/^[0-9a-f]{64}$/.test(sha256)) fail('lock: sha256 must be 64 lowercase hex');
   if (!Array.isArray(operations) || operations.length === 0 || new Set(operations).size !== operations.length) {

@@ -24,7 +24,7 @@ const op = (schema, operationId = 'platform.health.get') => ({
 const spec = (schema = HEALTH, extra = {}) => ({ info: { version: '1.18.0' }, paths: { '/api/v1/health': { get: op(schema) }, ...extra } });
 const lockFor = (sha256, version = '2.2.0') => ({
   version, sha256, operations: ['platform.health.get'],
-  url: `https://github.com/ductura/server/releases/download/contracts-v${version}/ductura-contracts-${version}.tgz`,
+  url: `https://github.com/ductura/Institution_server/releases/download/contracts-v${version}/ductura-contracts-${version}.tgz`,
 });
 
 // Minimal ustar writer: entries are { name, data, type } with type '0' by default.

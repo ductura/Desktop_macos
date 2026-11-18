@@ -1,7 +1,7 @@
 import Foundation
 
 /// ID rada po pravilu ugovora S-1H.1-c, isto kao serverski `isWorkId` i
-/// `workIdFromPath` (ductura/server `contracts/work-id.ts`). ID je neproziran
+/// `workIdFromPath` (ductura/Institution_server `contracts/work-id.ts`). ID je neproziran
 /// podatak: navodnici, `;` i `../` prolaze. Pravilo čita samo Unicode scalare.
 public enum WorkId {
     /// Najdulji ID, u scalarima (`length(id)` u CHECK-u baze).
