@@ -132,8 +132,24 @@ const phased = (dir, path, phase, action) => {
     + `fs.readSync = (fd, ...a) => { const n = rs(fd, ...a); if (f(fd).ino === ino) { reads++; total += n;\n`
     + `  if ((phase === 'first' && reads === 1) || (phase === 'last' && n > 0 && total === size) || (phase === 'eof' && n === 0)) fire(); }\n`
     + `  return n; };\nsyncBuiltinESMExports();\n`);
-  return run(dir, ['--verify'], ['--import', pathToFileURL(preload).href]);
+  const ctime = statSync(path, { bigint: true }).ctimeNs;
+  const r = run(dir, ['--verify'], ['--import', pathToFileURL(preload).href]);
+  // Precondition: the clock moved ctime, so a row cannot pass on a change the
+  // file system did not record.
+  assert.notEqual(statSync(path, { bigint: true }).ctimeNs, ctime, 'ctime moved');
+  return r;
 };
+
+// Reads come back short (7 bytes at most each): the script still reads both
+// files whole and exits 0, so a single read that assumes a full block fails.
+test('--verify reads to EOF when every read returns at most 7 bytes (exit 0)', within((dir) => {
+  const preload = join(dir, 'short.mjs');
+  writeFileSync(preload, "import fs from 'node:fs';\nimport { syncBuiltinESMExports } from 'node:module';\n"
+    + 'const rs = fs.readSync;\nfs.readSync = (fd, b, o, l, p) => rs(fd, b, o, Math.min(l, 7), p);\nsyncBuiltinESMExports();\n');
+  const r = run(dir, ['--verify'], ['--import', pathToFileURL(preload).href]);
+  assert.equal(r.code, 0, r.out);
+  assert.match(r.out, /matches/);
+}));
 // Hashes of the content after each change, from sha256sum, not from the script:
 // with them a script that checks the size only when the hash differs exits 0.
 const PACKAGE_CHANGES = [
@@ -193,8 +209,10 @@ for (const [what, phase, action, after] of SIDECAR_CHANGES) {
 // exit. A preload wraps every public function of node:fs and node:fs/promises
 // (constructors aside) and logs each call with an argument that names the
 // package or the .sha256: a string, URL, Buffer or any other ArrayBufferView,
-// matched by device and inode (lstat), so another spelling of the same path
-// counts too. Calls that bypass the public fs module are left to review.
+// matched by device and inode (lstat and stat), so another spelling of the
+// same path (/proc/self/cwd/..., /proc/self/fd/N) counts too. Calls that bypass
+// the public fs module, or reach the files only through their folder (cpSync,
+// globSync on dist/), are left to review.
 const COUNTS = [
   ['the untouched package', BYTES, GOOD, 0, ['package openSync', 'sha256 openSync']],
   ['a changed package', flipped(), GOOD, 1, ['package openSync', 'sha256 openSync']],
@@ -207,10 +225,11 @@ for (const [what, bytes, line, code, calls] of COUNTS) {
     writeFileSync(log, '');
     writeFileSync(preload, `import fs from 'node:fs';\nimport { fileURLToPath } from 'node:url';\nimport { syncBuiltinESMExports } from 'node:module';\n`
       + `const append = fs.appendFileSync, lstat = fs.lstatSync, log = ${JSON.stringify(log)};\n`
-      + `const id = (p) => { const s = lstat(p, { throwIfNoEntry: false }); return s && s.dev + ':' + s.ino; };\n`
-      + `const files = { [id(${JSON.stringify(pkg(dir))})]: 'package', [id(${JSON.stringify(sidecar(dir))})]: 'sha256' };\n`
+      + `const stat = fs.statSync, ids = (p) => [lstat, stat].map((f) => { const s = f(p, { throwIfNoEntry: false }); return s && s.dev + ':' + s.ino; });\n`
+      + `const files = { [ids(${JSON.stringify(pkg(dir))})[0]]: 'package', [ids(${JSON.stringify(sidecar(dir))})[0]]: 'sha256' };\n`
       + `const named = (x) => { try { const p = x instanceof URL ? fileURLToPath(x) : ArrayBuffer.isView(x)\n`
-      + `  ? Buffer.from(x.buffer, x.byteOffset, x.byteLength) : typeof x === 'string' ? x : null; return p !== null && files[id(p)]; } catch { return undefined; } };\n`
+      + `  ? Buffer.from(x.buffer, x.byteOffset, x.byteLength) : typeof x === 'string' ? x : null;\n`
+      + `  return p !== null && ids(p).map((i) => files[i]).find(Boolean); } catch { return undefined; } };\n`
       + `for (const [where, mod] of [['', fs], ['promises.', fs.promises]]) for (const k of Object.keys(mod)) {\n`
       + `  const f = mod[k]; if (typeof f !== 'function' || /^[A-Z]/.test(k)) continue;\n`
       + `  mod[k] = function (...a) { for (const x of a) { const n = named(x); if (n) append(log, n + ' ' + where + k + '\\n'); }\n`
