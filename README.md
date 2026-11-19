@@ -2,7 +2,7 @@
 
 macOS aplikacija i instalacijski paket. Swift (AppKit prozor s WKWebView od spikea D-0.1, DAN-957; tehnologija ljuske ovisi o odluci 8, otvoreno), paket kao `.dmg` s univerzalnim binarnim (Apple Silicon + Intel).
 
-Plan repozitorija: [docs/PLAN.md](docs/PLAN.md).
+Plan repozitorija: [docs/PLAN.md](https://github.com/ductura/.github/blob/main/docs/plan/PLAN-MIGRACIJE.md#katalog-zadataka).
 
 ## Funkcionalna provjera
 
