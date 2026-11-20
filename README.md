@@ -21,6 +21,7 @@ Drugi prolaz (DAN-998) kopira paket iz `.dmg` u izmišljenu mapu `Ductura test/�
 | `Sources/DucturaCore/Navigation.swift` | Pravilo navigacije za WKWebView (DAN-961): host s popisa ostaje u ljusci, drugi `https` host ide u preglednik, ostalo se odbija. Još nije spojeno na `decidePolicyFor`. |
 | `Sources/DucturaCore/Contracts.generated.swift` | Klijent ugovora (DAN-959), generiran iz OpenAPI-ja zaključanog `@ductura/contracts`; zasad samo `health`. Ne uređuje se ručno. |
 | `Sources/DucturaCore/ClientVersion.swift` | Provjera verzije pri pokretanju (DAN-945): odluka iz `health.minClientVersion` i `CFBundleShortVersionString`. Još nije spojena na prozor ni na poziv servera. |
+| `Sources/DucturaCore/AuthHeader.swift` | Token sesije u zaglavlju `Authorization: Bearer` (ADR S-1E-e): token iz okruženja `DUCTURA_SESSION_TOKEN`, samo za host s popisa `DucturaWebHosts`, neispravan token ne daje zaglavlje. Spojeno na prvo učitavanje WKWebView-a. |
 | `Sources/Ductura` | macOS aplikacija |
 | `Tests/DucturaCoreTests` | Testovi pomoćnih funkcija (XCTest) |
 | `Tests/functional` | Funkcionalni test instalacije |
