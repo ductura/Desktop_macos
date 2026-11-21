@@ -17,11 +17,13 @@ struct TestFakesLock: Equatable {
     let sha256: String
 }
 
-struct HealthVector {
+struct ContractVector {
     let name: String
     let status: Int
     let body: Data
 }
+
+typealias HealthVector = ContractVector
 
 enum TestFakesRelease {
     static let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
@@ -105,20 +107,20 @@ enum TestFakesRelease {
         return data
     }
 
-    static func healthVectors(_ json: Data) throws -> [HealthVector] {
+    static func vectors(for route: String, in json: Data) throws -> [ContractVector] {
         guard let list = try? JSONSerialization.jsonObject(with: json) as? [[String: Any]] else {
             throw VectorsError(description: "vectors.json nije popis objekata")
         }
-        return try list.filter { $0["route"] as? String == "platform.health.get" }.map { vector in
+        return try list.filter { $0["route"] as? String == route }.map { vector in
             let response = vector["response"] as? [String: Any]
             guard let name = vector["name"] as? String, let status = response?["status"] as? Int, let body = response?["body"] else {
-                throw VectorsError(description: "health vektor bez imena, statusa ili tijela")
+                throw VectorsError(description: "vektor \(route) bez imena, statusa ili tijela")
             }
-            return HealthVector(name: name, status: status, body: try JSONSerialization.data(withJSONObject: body, options: .fragmentsAllowed))
+            return ContractVector(name: name, status: status, body: try JSONSerialization.data(withJSONObject: body, options: .fragmentsAllowed))
         }
     }
 
-    static func load() throws -> [HealthVector] {
+    private static func load() throws -> Data {
         let lock = try parseLock(Data(contentsOf: root.appendingPathComponent("test-fakes.lock.json")))
         let tarball = try download(URL(string: lock.url)!)
         try checkSha256(tarball, lock)
@@ -126,10 +128,11 @@ enum TestFakesRelease {
         try tarball.write(to: file)
         defer { try? FileManager.default.removeItem(at: file) }
         try checkPackage(member(packageMember, of: file), lock)
-        return try healthVectors(member(vectorsMember, of: file))
+        return try member(vectorsMember, of: file)
     }
 
-    static let release = Result { try load() }
+    static let vectorJSON = Result { try load() }
+    static let release = Result { try vectors(for: "platform.health.get", in: vectorJSON.get()) }
 
     /// Test-only bridge, as documented on HealthReading: 200 with a decodable body is an answer.
     static func reading(_ vector: HealthVector) -> HealthReading {
