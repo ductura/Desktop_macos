@@ -28,7 +28,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     lazy var gate = WebNavigationGate(
         hosts: Bundle.main.infoDictionary?[WebAddress.hostsKey] as? String,
         openExternally: { _ = NSWorkspace.shared.open($0) },
-        allowedMainFrame: { [unowned self] webView, url in self.observe(webView, url) })
+        allowedMainFrame: { [unowned self] view, url in self.observe(view, url) })
     func applicationDidFinishLaunching(_ notification: Notification) {
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 960, height: 640),
                           styleMask: [.titled, .closable, .miniaturizable, .resizable],
@@ -68,9 +68,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// decidePolicyFor), never the URL we meant to load nor a refused one.
     var observed: [ObjectIdentifier: URL] = [:]
     var reported = false
-    func observe(_ webView: WKWebView, _ url: URL) {
-        guard observed[ObjectIdentifier(webView)] == nil else { return }
-        observed[ObjectIdentifier(webView)] = url
+    func observe(_ view: ObjectIdentifier, _ url: URL) {
+        guard observed[view] == nil else { return }
+        observed[view] = url
         if options.smokeWindowOutput != nil { reportWindow() }
     }
     /// Functional test: report what the window really contains, then quit.
