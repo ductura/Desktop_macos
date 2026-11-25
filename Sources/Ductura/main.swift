@@ -21,8 +21,14 @@ if options.smoke {
 }
 
 #if canImport(AppKit)
-final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate {
     var window: NSWindow!
+    /// Every request of the web view goes through the navigation rule with the bundle's host list
+    /// (DAN-1544). Held here because `navigationDelegate` is weak.
+    lazy var gate = WebNavigationGate(
+        hosts: Bundle.main.infoDictionary?[WebAddress.hostsKey] as? String,
+        openExternally: { _ = NSWorkspace.shared.open($0) },
+        allowedMainFrame: { [unowned self] webView, url in self.observe(webView, url) })
     func applicationDidFinishLaunching(_ notification: Notification) {
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 960, height: 640),
                           styleMask: [.titled, .closable, .miniaturizable, .resizable],
@@ -33,7 +39,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         switch Startup.windowContent(options: options, web: web) {
         case .web(let url):
             let webView = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
-            webView.navigationDelegate = self
+            webView.navigationDelegate = gate
             var request = URLRequest(url: url)
             // Session token in the header (ADR S-1E-e): read only under --smoke-window and sent
             // only to /api/v1/ on the web origin, so this HTML page itself never carries it.
@@ -58,17 +64,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         let delay: TimeInterval = view is WKWebView ? 30 : 0
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { self.reportWindow() }
     }
-    /// Per WKWebView: URL of the main-frame navigation WebKit actually started (decidePolicyFor),
-    /// never the URL we meant to load.
+    /// Per WKWebView: URL of the first main-frame navigation the gate allowed (WebKit's own
+    /// decidePolicyFor), never the URL we meant to load nor a refused one.
     var observed: [ObjectIdentifier: URL] = [:]
     var reported = false
-    func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
-                 decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-        decisionHandler(.allow)
-        if navigationAction.targetFrame?.isMainFrame == true, observed[ObjectIdentifier(webView)] == nil {
-            observed[ObjectIdentifier(webView)] = navigationAction.request.url
-            if options.smokeWindowOutput != nil { reportWindow() }
-        }
+    func observe(_ webView: WKWebView, _ url: URL) {
+        guard observed[ObjectIdentifier(webView)] == nil else { return }
+        observed[ObjectIdentifier(webView)] = url
+        if options.smokeWindowOutput != nil { reportWindow() }
     }
     /// Functional test: report what the window really contains, then quit.
     func reportWindow() {
