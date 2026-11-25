@@ -20,7 +20,8 @@ Drugi prolaz (DAN-998) kopira paket iz `.dmg` u izmišljenu mapu `Ductura test/�
 | `Sources/DucturaCore/Startup.swift` | Ishod `--smoke`, adresa za WKWebView ili poruka (`windowContent`) i redak `--smoke-window` |
 | `Sources/DucturaCore/Navigation.swift` | Pravilo navigacije za WKWebView (DAN-961): host s popisa ostaje u ljusci, drugi `https` host ide u preglednik, ostalo se odbija. Još nije spojeno na `decidePolicyFor`. |
 | `Sources/DucturaCore/Contracts.generated.swift` | Klijent ugovora (DAN-959), generiran iz OpenAPI-ja zaključanog `@ductura/contracts`; zasad samo `health`. Ne uređuje se ručno. |
-| `Sources/DucturaCore/ClientVersion.swift` | Provjera verzije pri pokretanju (DAN-945): odluka iz `health.minClientVersion` i `CFBundleShortVersionString`. Još nije spojena na prozor ni na poziv servera. |
+| `Sources/DucturaCore/ClientVersion.swift` | Provjera verzije pri pokretanju (DAN-945): odluka iz `health.minClientVersion` i `CFBundleShortVersionString`. Spojena u `main.swift` preko `HealthProbe` i `Startup.windowContent(…decision:)` (DAN-1545). |
+| `Sources/DucturaCore/HealthProbe.swift`, `ClientVersionHeader.swift` | Poziv `health` pri pokretanju (rok 5 s, bez ponavljanja, prijenos se ubacuje) i zaglavlje `X-Ductura-Client-Version` (ime je pretpostavka): samo na `https://<host weba>/api/v1/…`, nikad na HTML, a neispravna verzija ne daje zaglavlje. |
 | `Sources/DucturaCore/AuthHeader.swift` | Token sesije u zaglavlju `Authorization: Bearer` (ADR S-1E-e), po istom pravilu kao Windows `TokenHeaderHandler`: zaglavlje ide samo na `https://<host adrese weba>/api/v1/…` istog podrijetla (bez porta, korisnika, `%` i segmenata `.`/`..`), nikad na HTML stranicu; neispravan token ne daje zaglavlje. Token iz okruženja `DUCTURA_SESSION_TOKEN` čita se samo u ispitnom načinu `--smoke-window`; obično pokretanje ga ne čita. Prvo učitavanje WKWebView-a je stranica aplikacije, pa ne nosi token. |
 | `Sources/DucturaCore/UpdateOffer.swift` | Odluka o ponudi novijeg macOS paketa iz odgovora `downloads.manifest.get` (S-1H.5, DMAC-1302): strogo čitanje cijelog odgovora (`StrictJSON`), paket za arhitekturu `arm64` ili `x64` samo ako je noviji od instaliranog. Još nije spojena na prozor ni na poziv servera; preuzimanje, potpis i instalacija ne ulaze. |
 | `Sources/Ductura` | macOS aplikacija |
@@ -73,7 +74,7 @@ Pri pokretanju se verzija aplikacije (`CFBundleShortVersionString`) uspoređuje 
 | Isti ili noviji klijent, ili server ne daje minimum | otvori | otvara se |
 | Server nedostupan, `status` nije `ok` ili minimum nije ispravan | server nedostupan: web je offline-first, a API ionako odbija klijenta s kojim ne može raditi | otvara se |
 
-Spajanje na prozor i stvarni poziv servera s rokom slijede u sljedećem dijelu (DAN-945-2).
+Pri pokretanju `main.swift` zove `health` (rok 5 s) i prema odluci otvara web ili prikazuje poruku o nadogradnji. Ispitni način `--smoke-window` ne zove server. Zaglavlje verzije nosi poziv `health`; zahtjeve koje stranica sama šalje WKWebView ne dopušta mijenjati bez vlastitog rukovatelja sheme, pa to ostaje otvoreno.
 
 ## CI
 
