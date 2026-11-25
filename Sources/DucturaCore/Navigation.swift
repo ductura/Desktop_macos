@@ -29,3 +29,33 @@ public enum Navigation {
         return allowed.contains(String(host)) ? .stay : .browser(url)
     }
 }
+
+/// Gdje bi se zahtjev učitao (DAN-1544).
+public enum NavigationFrame: Equatable {
+    case main
+    case sub
+    /// `target=_blank` ili `window.open` (WebKit daje `targetFrame == nil`).
+    case newWindow
+}
+
+/// Što web prikaz radi sa zahtjevom (DAN-1544).
+public enum NavigationPolicy: Equatable {
+    case allow
+    case cancel
+    /// Ne učitava se u ljusci; adresa (točno tekst koji je pravilo provjerilo) ide u sustavni preglednik.
+    case cancelAndOpen(String)
+}
+
+extension Navigation {
+    /// Odluka za svaki `decidePolicyFor` web prikaza: prvo `decide`, pa okvir i vrsta navigacije.
+    /// Host s popisa učitava se samo u postojećem okviru (ljuska ne otvara nove prozore). U preglednik
+    /// ide samo klik na poveznicu u glavnom okviru ili novom prozoru; skripta, redirect, obrazac ili
+    /// podokvir prema drugom hostu se samo odbijaju, da stranica ne može sama otvarati preglednik.
+    public static func policy(url: String?, hosts: String?, frame: NavigationFrame, linkActivated: Bool) -> NavigationPolicy {
+        switch decide(url: url, hosts: hosts) {
+        case .stay: return frame == .newWindow ? .cancel : .allow
+        case .browser(let target): return frame != .sub && linkActivated ? .cancelAndOpen(target) : .cancel
+        case .refuse: return .cancel
+        }
+    }
+}
