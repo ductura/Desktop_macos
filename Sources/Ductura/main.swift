@@ -42,7 +42,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let web, options.smokeWindowOutput == nil else { return present(.serverUnavailable) }
         let current = version
         Task { @MainActor in
-            let reading = await HealthProbe.read(web: web, clientVersion: current) { try await URLSession.shared.data(for: $0) }
+            let reading = await HealthProbe.read(web: web, clientVersion: current, send: HealthProbe.send)
             self.present(ClientVersion.decide(reading, clientVersion: current))
         }
     }

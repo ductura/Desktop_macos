@@ -27,10 +27,35 @@ public enum HealthProbe {
         return .answered(status: body.status, minClientVersion: body.minClientVersion)
     }
 
-    public static func read(web: WebAddress, clientVersion: String,
-                            send: (URLRequest) async throws -> (Data, URLResponse)) async -> HealthReading {
-        guard let request = request(web: web, clientVersion: clientVersion),
-              let result = try? await send(request) else { return .unavailable }
+    /// Total deadline (not inactivity, which is all `timeoutInterval` limits): after `deadline` seconds
+    /// the call is cancelled and the answer is `unavailable`.
+    public static func read(web: WebAddress, clientVersion: String, deadline: TimeInterval = timeout,
+                            send: @escaping (URLRequest) async throws -> (Data, URLResponse)) async -> HealthReading {
+        guard let request = request(web: web, clientVersion: clientVersion) else { return .unavailable }
+        let result: (Data, URLResponse)? = await withTaskGroup(of: (Data, URLResponse)?.self) { group in
+            group.addTask { try? await send(request) }
+            group.addTask {
+                try? await Task.sleep(nanoseconds: UInt64(deadline * 1_000_000_000))
+                return nil
+            }
+            let first = await group.next() ?? nil
+            group.cancelAll()
+            return first
+        }
+        guard let result else { return .unavailable }
         return reading(data: result.0, response: result.1)
+    }
+
+    /// Production transport: a redirect is refused, so the version header never follows one to another URL
+    /// (the 3xx answer is then not a 200 and counts as `unavailable`).
+    public static func send(_ request: URLRequest) async throws -> (Data, URLResponse) {
+        try await URLSession.shared.data(for: request, delegate: NoRedirectDelegate())
+    }
+}
+
+final class NoRedirectDelegate: NSObject, URLSessionTaskDelegate {
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+        completionHandler(nil)
     }
 }

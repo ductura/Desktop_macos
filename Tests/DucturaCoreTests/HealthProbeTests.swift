@@ -69,6 +69,16 @@ final class HealthProbeTests: XCTestCase {
         XCTAssertEqual(ClientVersion.decide(reading, clientVersion: "1.0.0"), .serverUnavailable)
     }
 
+    func testZastojPrijenosaIstjeceNaUkupnomRoku() async {
+        let started = Date()
+        let reading = await HealthProbe.read(web: Self.web, clientVersion: "1.0.0", deadline: 0.2) { _ in
+            try await Task.sleep(nanoseconds: 30_000_000_000)
+            return (Data(), self.response())
+        }
+        XCTAssertEqual(reading, .unavailable)
+        XCTAssertLessThan(Date().timeIntervalSince(started), 5)
+    }
+
     func testProzorPoOdluciOVerziji() {
         let options = LaunchOptions()
         XCTAssertEqual(Startup.windowContent(options: options, web: Self.web, decision: .open), .web(URL(string: "https://ductura.org/app/")!))
