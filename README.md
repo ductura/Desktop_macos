@@ -1,4 +1,4 @@
-# Ductura / desktop-macos
+# ductura/Desktop_macos
 
 macOS aplikacija i instalacijski paket. Swift (AppKit prozor s WKWebView od spikea D-0.1, DAN-957; tehnologija ljuske ovisi o odluci 8, otvoreno), paket kao `.dmg` s univerzalnim binarnim (Apple Silicon + Intel).
 
@@ -21,13 +21,17 @@ Drugi prolaz (DAN-998) kopira paket iz `.dmg` u izmišljenu mapu `Ductura test/�
 | `Sources/DucturaCore/Navigation.swift` | Pravilo navigacije za WKWebView (DAN-961): host s popisa ostaje u ljusci, drugi `https` host ide u preglednik, ostalo se odbija. Još nije spojeno na `decidePolicyFor`. |
 | `Sources/DucturaCore/Contracts.generated.swift` | Klijent ugovora (DAN-959), generiran iz OpenAPI-ja zaključanog `@ductura/contracts`; zasad samo `health`. Ne uređuje se ručno. |
 | `Sources/DucturaCore/ClientVersion.swift` | Provjera verzije pri pokretanju (DAN-945): odluka iz `health.minClientVersion` i `CFBundleShortVersionString`. Još nije spojena na prozor ni na poziv servera. |
+| `Sources/DucturaCore/AuthHeader.swift` | Token sesije u zaglavlju `Authorization: Bearer` (ADR S-1E-e), po istom pravilu kao Windows `TokenHeaderHandler`: zaglavlje ide samo na `https://<host adrese weba>/api/v1/…` istog podrijetla (bez porta, korisnika, `%` i segmenata `.`/`..`), nikad na HTML stranicu; neispravan token ne daje zaglavlje. Token iz okruženja `DUCTURA_SESSION_TOKEN` čita se samo u ispitnom načinu `--smoke-window`; obično pokretanje ga ne čita. Prvo učitavanje WKWebView-a je stranica aplikacije, pa ne nosi token. |
+| `Sources/DucturaCore/UpdateOffer.swift` | Odluka o ponudi novijeg macOS paketa iz odgovora `downloads.manifest.get` (S-1H.5, DMAC-1302): strogo čitanje cijelog odgovora (`StrictJSON`), paket za arhitekturu `arm64` ili `x64` samo ako je noviji od instaliranog. Još nije spojena na prozor ni na poziv servera; preuzimanje, potpis i instalacija ne ulaze. |
 | `Sources/Ductura` | macOS aplikacija |
 | `Tests/DucturaCoreTests` | Testovi pomoćnih funkcija (XCTest) |
 | `Tests/functional` | Funkcionalni test instalacije |
 | `scripts/build-dmg.sh` | Izrada `Ductura.app` i `dist/Ductura-macOS.dmg` |
 | `scripts/ci-ok.test.mjs` | Test obvezne zbirne provjere `ci-ok` u `.github/workflows/ci.yml` (`npm ci` pa `node --test`, u CI-ju na Linuxu). `package.json` i `package-lock.json` služe samo Node provjerama u CI-ju (YAML parser `yaml`); aplikacija ne koristi Node. |
-| `test-fakes.lock.json`, `Tests/DucturaCoreTests/ContractVectorsTests.swift` | Zaključano izdanje `@ductura/test-fakes` (URL `.tgz`, sha256) i test (DAN-999) koji `health` vektore iz njega provodi kroz generirani dekoder i `ClientVersion`; `HealthVectorMutationTests` mijenja po jedan pravi vektor i traži da provjera padne. `swift test` ga preuzima bez tokena; bez mreže ili uz drugi sha256 test namjerno pada, ne preskače se. |
-| `contracts.lock.json`, `scripts/contracts.mjs` | Zaključana verzija `@ductura/contracts` (URL `.tgz` s GitHub Releasea servera i sha256) i generator Swifta bez ovisnosti. `node scripts/contracts.mjs --write` regenerira klijent; `--check` u CI-ju pada (izlaz 1) kad se commitani Swift i zaključani OpenAPI razilaze, a izlaz 2 znači da tarball nije upotrebljiv (mreža, sha256, sadržaj). Testovi: `scripts/contracts.test.mjs`. Lock je 2.7.0 jer od 2.5.0 nosi `vectors/work-id.json`; čitanje tih vektora u `swift test` je DAN-1001 dio 2. |
+| `test-fakes.lock.json`, `Tests/DucturaCoreTests/ContractVectorsTests.swift` | Zaključano izdanje `@ductura/test-fakes` 3.1.1 (URL `.tgz`, sha256) i test (DAN-999) koji `health` vektore iz njega provodi kroz generirani dekoder i `ClientVersion`; `HealthVectorMutationTests` mijenja po jedan pravi vektor i traži da provjera padne. `swift test` ga preuzima bez tokena; bez mreže ili uz drugi sha256 test namjerno pada, ne preskače se. |
+| `Tests/DucturaCoreTests/ManifestVectorsTests.swift` | Vektore `downloads.manifest.get` iz istog izdanja test-fakes 3.1.1 provodi kroz `UpdateOffer` za obje arhitekture i uspoređuje s očekivanom ponudom. |
+| `Tests/DucturaCoreTests/WorkIdVectorsTests.swift` | Vektore `vectors/work-id.json` iz zaključanog `@ductura/contracts` (`contracts.lock.json`) provodi kroz poveznicu `ductura://doc/<id>` i `LaunchOptions` (DAN-1001 dio 2); popis vektora mora odgovarati, inače test pada. |
+| `contracts.lock.json`, `scripts/contracts.mjs` | Zaključana verzija `@ductura/contracts` (URL `.tgz` s GitHub Releasea servera i sha256) i generator Swifta bez ovisnosti. `node scripts/contracts.mjs --write` regenerira klijent; `--check` u CI-ju pada (izlaz 1) kad se commitani Swift i zaključani OpenAPI razilaze, a izlaz 2 znači da tarball nije upotrebljiv (mreža, sha256, sadržaj). Testovi: `scripts/contracts.test.mjs`. Lock je 2.7.0 jer od 2.5.0 nosi `vectors/work-id.json`; te vektore u `swift test` čita `WorkIdVectorsTests`. |
 
 ## Adresa weba
 
@@ -56,7 +60,7 @@ Nalazi (CI `macos-latest`):
 | Sandbox | Paket nije u App Sandboxu: potpisan je ad-hoc, a `codesign -d --entitlements -` u logu funkcionalnog testa ne ispisuje nijedno pravo. |
 | Mrežna prava | Bez sandboxa WKWebView smije na mrežu bez dodatnih prava. Uz App Sandbox paket treba `com.apple.security.network.client`, inače se stranica ne učitava. |
 | ATS | Nije provjereno: `http` adresu odbija već `WebAddress`, prije WKWebView-a. |
-| Što ne ulazi | Prijava, nadogradnje, potpis i notarizacija; pravila navigacije (`decidePolicyFor`, DAN-961). |
+| Što ne ulazi | Prijava, preuzimanje i instalacija nadogradnje, potpis i notarizacija; pravila navigacije (`decidePolicyFor`, DAN-961). |
 
 ## Najmanja verzija klijenta
 
