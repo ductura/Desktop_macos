@@ -7,6 +7,8 @@ import WebKit
 
 let options = LaunchOptions.parse(Array(CommandLine.arguments.dropFirst()))
 let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
+// Own name: inside AppDelegate `version` would resolve to NSObject.version().
+let launchVersion = version
 // Web address from the bundle's Info.plist (DAN-883); nil when it fails the check.
 let web = WebAddress.fromInfo(Bundle.main.infoDictionary)
 
@@ -40,7 +42,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Launch check of the server health (DAN-1545). Not under --smoke-window: that functional test
         // must not depend on the live server. Without a checked address there is nothing to ask.
         guard let web, options.smokeWindowOutput == nil else { return present(.serverUnavailable) }
-        let current = version
+        let current = launchVersion
         Task { @MainActor in
             let reading = await HealthProbe.read(web: web, clientVersion: current, send: HealthProbe.send)
             self.present(ClientVersion.decide(reading, clientVersion: current))
