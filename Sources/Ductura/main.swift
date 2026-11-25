@@ -35,10 +35,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
             let webView = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
             webView.navigationDelegate = self
             var request = URLRequest(url: url)
-            // Session token in the header (ADR S-1E-e); only for a host on the shell's list.
-            let headers = AuthHeader.headers(token: AuthHeader.token(environment: ProcessInfo.processInfo.environment),
-                                             url: url.absoluteString,
-                                             hosts: Bundle.main.infoDictionary?["DucturaWebHosts"] as? String)
+            // Session token in the header (ADR S-1E-e): read only under --smoke-window and sent
+            // only to /api/v1/ on the web origin, so this HTML page itself never carries it.
+            let headers = AuthHeader.headers(token: AuthHeader.token(environment: ProcessInfo.processInfo.environment,
+                                                                     options: options),
+                                             url: url.absoluteString, web: web)
             for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
             webView.load(request)
             view = webView
