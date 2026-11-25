@@ -34,9 +34,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                           styleMask: [.titled, .closable, .miniaturizable, .resizable],
                           backing: .buffered, defer: false)
         window.title = Packaging.productName
+        window.center()
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        // Launch check of the server health (DAN-1545). Not under --smoke-window: that functional test
+        // must not depend on the live server. Without a checked address there is nothing to ask.
+        guard let web, options.smokeWindowOutput == nil else { return present(.serverUnavailable) }
+        let current = version
+        Task { @MainActor in
+            let reading = await HealthProbe.read(web: web, clientVersion: current) { try await URLSession.shared.data(for: $0) }
+            self.present(ClientVersion.decide(reading, clientVersion: current))
+        }
+    }
+    /// Fills the window: the web view only for a checked address and a client that may run (DAN-957, DAN-1545).
+    func present(_ decision: ClientVersionDecision) {
         // Fail closed: without a checked address there is no WKWebView, only the message (DAN-957).
         let view: NSView
-        switch Startup.windowContent(options: options, web: web) {
+        switch Startup.windowContent(options: options, web: web, decision: decision) {
         case .web(let url):
             let webView = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
             webView.navigationDelegate = gate
@@ -56,9 +70,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             view.addSubview(label)
         }
         window.contentView = view
-        window.center()
-        window.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
         // A WKWebView is reported only once WebKit asks about its navigation; without one, `error`.
         guard options.smokeWindowOutput != nil else { return }
         let delay: TimeInterval = view is WKWebView ? 30 : 0
